@@ -1,46 +1,40 @@
-# SuxxText Project Plan and Progress
+# SuXXteXt Project Plan and Progress
 
-## Current Progress (as of June 2025)
+## Project Status: Public Release (Current as of Jan 2026)
 
-The SuxxText project has evolved significantly, now offering robust YouTube video transcription and channel analysis capabilities. Key achievements include:
+**Repository:** `https://github.com/Reperion/SuXXteXt`
 
--   **Core Transcription Functionality:**
-    -   Audio download from YouTube videos using `yt-dlp` into `channels/[ChannelName]/mp3/`.
-    -   Transcription using OpenAI Whisper, saving text into `channels/[ChannelName]/transcriptions/`.
-    -   Support for various Whisper model sizes (tiny, base, small, medium, large).
-    -   Optional low-resolution video download for single videos.
--   **Batch Channel Processing:**
-    -   Ability to fetch metadata for *all* videos from a channel using `yt-dlp`.
-    -   Saving complete channel metadata to `channels/[ChannelName]/[ChannelName]-full-history.json`.
-    -   Targeted processing of the latest N videos or all videos, with user-defined concurrency.
-    -   Intelligent skipping of already transcribed videos for efficient resumption.
-    -   Robust error logging to `channels/[ChannelName]/error_log.txt`.
-    -   Improved filename conventions for clarity and uniqueness (e.g., `VideoTitle_ViewCount_ID.mp3/.txt`).
--   **Channel Statistics Generation:**
-    -   Integration of `yt_channel_analyzer.py` to generate comprehensive HTML reports.
-    -   Reports are saved to `channels/[ChannelName]/[ChannelName]_statistics.html`.
-    -   Reports include overall channel statistics and top 10 videos by views, duration, and likes.
-    -   HTML reports are styled with dedicated CSS/JS assets in `report-generator-css/`.
-    -   HTML report titles link directly to the YouTube channel.
-    -   Improved UI/UX for reports (renamed "Visualizations" to "Statistics", reduced padding).
--   **Enhanced Command-Line Interface (CLI):**
-    -   The main `transcribe2.py` script now features a looping menu for continuous operation.
-    -   New option "4. Generate Statistics" added to the main menu.
-    -   Includes an "0. Exit" option for graceful termination.
-    -   Incorporates a 5-second pause after statistics generation for better user flow.
-    -   Improved colorama usage for better readability and user guidance.
--   **Project Organization:**
-    -   All documentation files (`.md`) have been consolidated into a new `docs/` folder.
-    -   Consistent filename sanitization across scripts.
+The project has transitioned from a private development tool (`yt-transcriber`) to a public open-source repository named **SuXXteXt**. It has been optimized for SEO, cleaned of sensitive data, and licensed for non-commercial use.
 
-## Next Steps (Future Enhancements)
+### Recent Major Achievements
 
--   **Timestamped Transcription Output:** Implement options for generating transcriptions with timestamps.
--   **Improved Date Handling:** Investigate alternative methods for obtaining video upload dates if `yt-dlp` continues to provide null values in certain JSON structures, to enable time-series charts.
--   **More Charting Options:** Explore additional data visualizations for the HTML reports (e.g., video duration distribution).
--   **User Configuration:** Allow users to configure default Whisper model, concurrency, etc., via a config file.
--   **Web Interface:** Consider developing a simple web-based interface for easier interaction.
--   **Error Handling Refinement:** Further refine error handling and reporting for edge cases.
+-   **Public Release Preparation:**
+    -   **Repository Rename:** Renamed to `SuXXteXt` to resolve naming conflicts.
+    -   **Licensing:** Adopted **CC BY-NC 4.0** license (Attribution-NonCommercial).
+    -   **Security:** Full repository scan for secrets and git history reset to ensure a clean public launch.
+    -   **Attribution:** Added proper credits for core dependencies (`yt-dlp`, `Whisper`, `Colorama`) and author (`LuCiDDre@MS`).
+-   **SEO & Visibility Optimization:**
+    -   **Root README:** Moved and enhanced `README.md` with dynamic status badges, keywords, and a "Quick Start" guide.
+    -   **Social Preview:** Designed concept for social media cards (`SOCIAL_PREVIEW_IDEA.md`).
+    -   **Installation:** Added `requirements.txt` for simplified setup.
+-   **Completed Core Features:**
+    -   **Offline AI Transcription:** Robust local transcription with OpenAI Whisper.
+    -   **Batch Processing:** Parallel processing for channel-wide downloads.
+    -   **Channel Analytics:** Generation of HTML reports from channel history.
+
+---
+
+## Core Technologies & Tools
+
+SuxxText integrates powerful external tools:
+
+*   **`yt-dlp`**: Video/Audio downloading and metadata extraction.
+*   **`Whisper (OpenAI)`**: State-of-the-art ASR for transcription.
+*   **`Colorama`**: Enhanced terminal UI.
+*   **`concurrent.futures`**: Parallel processing implementation.
+*   **`yt_channel_analyzer.py`**: Custom script for HTML statistics generation.
+
+---
 
 ## Core Workflow Diagrams
 
@@ -92,28 +86,46 @@ graph TD
     style G_End fill:#lightpurple,stroke:#333,stroke-width:2px
 ```
 
+---
+
 ## Progress Checklist
 
--   [x] Environment Setup
--   [x] Audio Download Module
--   [x] Transcription Module
--   [x] Implement channel video retrieval, folder organization, and parallel processing
--   [x] Implement channel statistics generation (`yt_channel_analyzer.py`)
--   [x] Integrate statistics generation into main CLI (`transcribe2.py`)
--   [x] Enhance CLI with looping menu and exit option
+### Platform & Setup
+-   [x] Environment Setup (Python 3.8+, ffmpeg)
 -   [x] Update folder structure and naming conventions
--   [ ] Add timestamped transcription output
--   [ ] Testing and Validation (Ongoing)
--   [x] Documentation (Ongoing)
+-   [x] Create `requirements.txt`
+-   [x] Establish gitignore for sensitive user data (`channels/`, `backup/`)
+
+### Core Features
+-   [x] Audio Download Module (`yt-dlp`)
+-   [x] Transcription Module (`Whisper`)
+-   [x] Batch Processing (Channel video retrieval, parallel execution)
+-   [x] Statistics Generation (`yt_channel_analyzer.py` -> HTML)
+-   [x] Enhanced CLI (Looping menu, Colorama support)
+
+### Public Release & Docs
+-   [x] Documentation Consolidated in `docs/`
+-   [x] **SEO Optimization** (Root README, Badges, Keywords)
+-   [x] **Public License** (CC BY-NC 4.0)
+-   [x] **Git History Reset** for clean release
+-   [x] Repository Rename to `SuXXteXt`
+
+### Future Roadmap
+-   [ ] **Timestamped Transcription Output:** Implement options for generating transcriptions with timestamps.
+-   [ ] **Improved Date Handling:** Investigate better methods for parsing upload dates for time-series charts.
+-   [ ] **More Charting Options:** Explore additional visualizations (e.g., duration distribution).
+-   [ ] **User Configuration:** Config file for default model, concurrency, etc.
+-   [ ] **Web Interface:** Potential future web-based UI.
+-   [ ] **Testing:** Ongoing validation and edge-case handling.
+
+---
 
 ## Whisper Model Sizes
 
--   tiny: ~70 MB, fastest but less accurate
--   base: ~140 MB, good balance of speed and accuracy
--   small: ~244 MB, more accurate but slower
--   medium: ~769 MB, higher accuracy, requires more resources
--   large: ~1.5 GB, highest accuracy, requires significant memory and GPU power
+-   **tiny**: ~70 MB, fastest but less accurate
+-   **base**: ~140 MB, good balance of speed and accuracy
+-   **small**: ~244 MB, more accurate but slower
+-   **medium**: ~769 MB, higher accuracy, requires more resources
+-   **large**: ~1.5 GB, highest accuracy, requires significant memory and GPU power
 
-Notes:
--   1h 14 minute video (70MB MP4) took approximately 2 minutes 20 seconds to transcribe using the base model on a 380Ti RTX Mobile GPU with 16GB VRAM.
--   GPU utilization and performance for larger models have been verified.
+*Note: Performance validated on NVIDIA 3080Ti Mobile GPU.*
