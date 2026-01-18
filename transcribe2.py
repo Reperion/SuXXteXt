@@ -9,6 +9,8 @@ from colorama import Fore, Style
 import json # Moved to global scope
 import argparse # Added for CLI argument support
 import threading # Added for transcription lock
+import queue # Added for ModelPool
+import contextlib # Added for ModelPool context manager
 
 colorama.init(autoreset=True)
 
@@ -25,6 +27,8 @@ def print_header_and_clear():
 """
     print(f"{Fore.GREEN + Style.BRIGHT}{ascii_art}{Style.RESET_ALL}")
 
+    print(f"{Fore.GREEN + Style.BRIGHT}{ascii_art}{Style.RESET_ALL}")
+
 def print_subtext():
     subtext = f"""
 {Fore.GREEN}SuXXTeXt extracts audio/video from YouTube videos and transcribes them to text using Whisper.
@@ -35,6 +39,29 @@ Download full channel history as json file.
 Choose an option to proceed:
 {Style.RESET_ALL}"""
     print(subtext)
+
+class ModelPool:
+    def __init__(self, model_name, pool_size):
+        self.pool = queue.Queue()
+        self.pool_size = pool_size
+        print(f"{Fore.MAGENTA}Initializing Model Pool with {pool_size} instances of '{model_name}'...{Style.RESET_ALL}")
+        for i in range(pool_size):
+            try:
+                # Load model. Whisper automatically picks cuda if available.
+                model = whisper.load_model(model_name)
+                self.pool.put(model)
+                print(f"{Fore.MAGENTA}  - Loaded model instance {i+1}/{pool_size} on {model.device}{Style.RESET_ALL}")
+            except Exception as e:
+                print(f"{Fore.RED}Error loading model instance {i+1}: {e}{Style.RESET_ALL}")
+                raise e
+
+    @contextlib.contextmanager
+    def get_model(self):
+        model = self.pool.get()
+        try:
+            yield model
+        finally:
+            self.pool.put(model)
 
 def sanitize_filename(name, max_length=50):
     # Remove/replace problematic characters and truncate
@@ -230,7 +257,7 @@ def download_channel_history_json(url=None):
     print(f"{Fore.GREEN}Done.{Style.RESET_ALL}")
 
 # --- Helper function for processing a single video in parallel ---
-def process_video_task(video_info, mp3_dir, trans_dir, logf, model, lock):
+def process_video_task(video_info, mp3_dir, trans_dir, logf, model_pool, lock=None):
     """Downloads and transcribes a single video. Returns status and message."""
     video_id = video_info['id']
     video_url = f"https://www.youtube.com/watch?v={video_id}"
@@ -261,8 +288,16 @@ def process_video_task(video_info, mp3_dir, trans_dir, logf, model, lock):
 
     # --- Transcribe Audio ---
     print(f"{Fore.WHITE}[{video_id}] Transcribing audio...{Style.RESET_ALL}")
-    # Using 'base' model for consistency
-    ok, err = transcribe_audio(mp3_path, model, txt_path, lock)
+    
+    try:
+        # Acquire a model from the pool
+        with model_pool.get_model() as model:
+            # No lock needed here as each model in the pool is independent and owned by this thread currently
+            ok, err = transcribe_audio(mp3_path, model, txt_path, lock=None)
+    except Exception as pool_err:
+        ok = False
+        err = f"Model execution failed: {pool_err}"
+
     if not ok:
         msg = f"Transcription error for {title} ({video_id}): {err}"
         print(f"{Fore.RED + Style.BRIGHT}[{video_id}] {msg}{Style.RESET_ALL}")
@@ -276,7 +311,7 @@ def process_video_task(video_info, mp3_dir, trans_dir, logf, model, lock):
 
     return "success", f"Successfully processed {title} ({video_id})"
 
-def process_channel_videos(url=None, limit=None, workers=None):
+def process_channel_videos(url=None, limit=None, workers=None, model_instances=None):
     """Process channel videos. If arguments are None, prompt the user interactively."""
     # import json # Moved to global scope
 
@@ -331,23 +366,38 @@ def process_channel_videos(url=None, limit=None, workers=None):
 
     # Get workers from argument or prompt
     if workers is None:
-        concurrency_str = input(f"{Fore.CYAN}Enter the number of videos to process concurrently [default 4, max 16]: {Style.RESET_ALL}").strip()
+        concurrency_str = input(f"{Fore.CYAN}Enter the number of videos to process concurrently [default 8, max 32]: {Style.RESET_ALL}").strip()
         try:
-            max_workers = int(concurrency_str) if concurrency_str else 4
+            max_workers = int(concurrency_str) if concurrency_str else 8
             if max_workers <= 0:
-                print(f"{Fore.YELLOW}Concurrency level must be positive. Using default of 4.{Style.RESET_ALL}")
-                max_workers = 4
-            elif max_workers > 16:
-                print(f"{Fore.YELLOW}Concurrency level capped at 16. Using 16.{Style.RESET_ALL}")
-                max_workers = 16
+                print(f"{Fore.YELLOW}Concurrency level must be positive. Using default of 8.{Style.RESET_ALL}")
+                max_workers = 8
+            elif max_workers > 32:
+                print(f"{Fore.YELLOW}Concurrency level capped at 32 for stability. Using 32.{Style.RESET_ALL}")
+                max_workers = 32
             else:
                  print(f"{Fore.BLUE}Using {max_workers} concurrent workers.{Style.RESET_ALL}")
         except ValueError:
-            print(f"{Fore.YELLOW}Invalid number for concurrency. Using default of 4.{Style.RESET_ALL}")
-            max_workers = 4
+            print(f"{Fore.YELLOW}Invalid number for concurrency. Using default of 8.{Style.RESET_ALL}")
+            max_workers = 8
     else:
-        max_workers = min(max(1, int(workers)), 16)
+        max_workers = min(max(1, int(workers)), 32)
         print(f"{Fore.BLUE}Using {max_workers} concurrent workers.{Style.RESET_ALL}")
+
+    # Determine model pool size
+    if model_instances is None:
+        # Default to matching worker count if not specified via CLI, or ask user? 
+        # For simplicity in interactive mode, let's default to max_workers or ask.
+        # Let's ask to depend on GPU strength, but defaulting to worker count is a safe bet for high-end GPUs.
+        model_count_str = input(f"{Fore.CYAN}Enter number of model instances to load [default {max_workers}]: {Style.RESET_ALL}").strip()
+        try:
+             pool_size = int(model_count_str) if model_count_str else max_workers
+        except ValueError:
+             pool_size = max_workers
+    else:
+        pool_size = int(model_instances)
+    
+    print(f"{Fore.BLUE}Using {pool_size} parallel model instances.{Style.RESET_ALL}")
 
     channel_title = channel_info.get('title', 'channel')
     # Remove trailing '/videos' or similar from the channel_url for folder naming
@@ -388,17 +438,16 @@ def process_channel_videos(url=None, limit=None, workers=None):
 
     print(f"\n{Fore.BLUE}Starting processing. Aiming to ensure the latest {num_videos_target} videos are processed using up to {max_workers} workers.{Style.RESET_ALL}")
 
-    # --- Load Model ONCE ---
-    print(f"{Fore.MAGENTA}Loading Whisper model 'base' into GPU memory (shared for all workers)...{Style.RESET_ALL}")
+    # --- Load Model Pool ---
+    print(f"{Fore.MAGENTA}Loading {pool_size} instances of Whisper model 'base' into GPU memory...{Style.RESET_ALL}")
     try:
-        shared_model = whisper.load_model("base")
-        print(f"{Fore.MAGENTA}Model loaded successfully on {shared_model.device}.{Style.RESET_ALL}")
+        model_pool = ModelPool("base", pool_size)
     except Exception as e:
-        print(f"{Fore.RED}Error loading model: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}Error initializing model pool: {e}{Style.RESET_ALL}")
         return
 
-    # Create a lock for GPU access
-    gpu_lock = threading.Lock()
+    # No longer need a global GPU lock
+    gpu_lock = None
 
     # --- Use ThreadPoolExecutor for parallel processing ---
     # Using ThreadPoolExecutor as downloading is I/O bound, transcription might be CPU/GPU bound
@@ -415,6 +464,15 @@ def process_channel_videos(url=None, limit=None, workers=None):
 
             # --- First pass: Check duplicates and submit tasks ---
             checked_count = 0
+            
+            # Cache the file list ONCE before the loop to avoid O(N^2) performance hit
+            try:
+                existing_transcriptions = os.listdir(trans_dir)
+            except OSError as e:
+                print(f"{Fore.YELLOW}  - Warning: Could not list transcription directory {trans_dir}: {e}{Style.RESET_ALL}")
+                logf.write(f"Warning: Could not list transcription directory {trans_dir}: {e}\n")
+                existing_transcriptions = []
+
             for idx, video in enumerate(videos):
                 if checked_count >= num_videos_target:
                     print(f"{Fore.YELLOW}Reached target of {num_videos_target} videos checked. No more tasks will be submitted.{Style.RESET_ALL}")
@@ -426,17 +484,12 @@ def process_channel_videos(url=None, limit=None, workers=None):
 
                 # --- Duplicate Check ---
                 found_existing = False
-                try:
-                    existing_files = os.listdir(trans_dir)
-                    for existing_file in existing_files:
-                        if video_id in existing_file and existing_file.endswith(".txt"):
-                            print(f"{Fore.YELLOW}  - Transcription file containing ID {video_id} already exists: {existing_file}. Skipping.{Style.RESET_ALL}")
-                            found_existing = True
-                            skipped_count += 1
-                            break
-                except OSError as e:
-                    print(f"{Fore.YELLOW}  - Warning: Could not list transcription directory {trans_dir}: {e}{Style.RESET_ALL}")
-                    logf.write(f"Warning: Could not list transcription directory {trans_dir}: {e}\n")
+                for existing_file in existing_transcriptions:
+                    if video_id in existing_file and existing_file.endswith(".txt"):
+                        print(f"{Fore.YELLOW}  - Transcription file containing ID {video_id} already exists: {existing_file}. Skipping.{Style.RESET_ALL}")
+                        found_existing = True
+                        skipped_count += 1
+                        break
 
                 checked_count += 1 # Increment checked count regardless of skip
 
@@ -446,7 +499,7 @@ def process_channel_videos(url=None, limit=None, workers=None):
                 # --- Submit task to executor ---
                 print(f"{Fore.BLUE}  - Submitting task for video {video_id}...{Style.RESET_ALL}")
                 # Pass necessary info to the task function
-                future = executor.submit(process_video_task, video, mp3_dir, trans_dir, logf, shared_model, gpu_lock)
+                future = executor.submit(process_video_task, video, mp3_dir, trans_dir, logf, model_pool, gpu_lock)
                 futures.append(future)
                 videos_to_process_list.append(video_id) # Track submitted video
 
@@ -524,8 +577,11 @@ Examples:
                         help='Number of videos to process (or "all") for batch mode. Default: 10')
     parser.add_argument('--workers', 
                         type=int, 
-                        default=4,
-                        help='Number of concurrent workers for batch mode (1-16). Default: 4')
+                        default=8,
+                        help='Number of concurrent workers for batch mode (1-32). Default: 8')
+    parser.add_argument('--model_instances',
+                        type=int,
+                        help='Number of model instances to load. Defaults to matching worker count.')
 
     args = parser.parse_args()
 
@@ -541,7 +597,7 @@ Examples:
             if not args.url:
                 print(f"{Fore.RED + Style.BRIGHT}Error: --url is required for batch mode{Style.RESET_ALL}")
                 return
-            process_channel_videos(url=args.url, limit=args.limit, workers=args.workers)
+            process_channel_videos(url=args.url, limit=args.limit, workers=args.workers, model_instances=args.model_instances)
         elif args.mode == 'json':
             if not args.url:
                 print(f"{Fore.RED + Style.BRIGHT}Error: --url is required for json mode{Style.RESET_ALL}")
