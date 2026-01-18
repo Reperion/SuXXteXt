@@ -33,8 +33,8 @@ Get up and running in seconds.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/LuCiDDre@MS/yt-transcriber.git
-cd yt-transcriber
+git clone https://github.com/Reperion/SuXXteXt.git
+cd SuXXteXt
 
 # 2. Install dependencies
 pip install -r requirements.txt

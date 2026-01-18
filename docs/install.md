@@ -17,8 +17,8 @@ This guide details the full installation process for setting up the SuxxText pro
 
 ```bash
 cd ~/projects
-mkdir yt-transcriber
-cd yt-transcriber
+mkdir SuXXteXt
+cd SuXXteXt
 ```
 
 ---
@@ -26,8 +26,8 @@ cd yt-transcriber
 ## 3. Create and Activate Python Virtual Environment
 
 ```bash
-python3 -m venv yt-transcriber-venv
-source yt-transcriber-venv/bin/activate
+python3 -m venv suxxtext-venv
+source suxxtext-venv/bin/activate
 ```
 
 ---
@@ -137,7 +137,7 @@ To remove the virtual environment and all installed packages:
 
 ```bash
 deactivate
-rm -rf yt-transcriber-venv
+rm -rf suxxtext-venv
 ```
 
 ---

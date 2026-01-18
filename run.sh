@@ -3,12 +3,12 @@
 # Automatically activates the virtual environment and runs the transcriber
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$SCRIPT_DIR/yt-transcriber-venv"
+VENV_DIR="$SCRIPT_DIR/suxxtext-venv"
 
 # Check if virtual environment exists
 if [ ! -d "$VENV_DIR" ]; then
     echo "Error: Virtual environment not found at $VENV_DIR"
-    echo "Please run: python3 -m venv yt-transcriber-venv && source yt-transcriber-venv/bin/activate && pip install yt-dlp openai-whisper colorama"
+    echo "Please run: python3 -m venv suxxtext-venv && source suxxtext-venv/bin/activate && pip install -r requirements.txt"
     exit 1
 fi
 
