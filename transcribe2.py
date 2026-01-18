@@ -8,6 +8,7 @@ import colorama
 from colorama import Fore, Style
 import json # Moved to global scope
 import argparse # Added for CLI argument support
+import threading # Added for transcription lock
 
 colorama.init(autoreset=True)
 
@@ -48,16 +49,27 @@ def download_audio(youtube_url, output_file):
     # Download audio from YouTube using yt-dlp
     try:
         subprocess.run([
-            "yt-dlp", "-x", "--audio-format", "mp3", "-o", output_file, youtube_url
+            "yt-dlp", "-f", "bestaudio[ext=m4a]/bestaudio", "-o", output_file, youtube_url
         ], check=True)
         return True, None
     except subprocess.CalledProcessError as e:
         return False, str(e)
 
-def transcribe_audio(audio_file, model_name, output_file):
+def transcribe_audio(audio_file, model_name_or_obj, output_file, lock=None):
     try:
-        model = whisper.load_model(model_name)
-        result = model.transcribe(audio_file)
+        # Check if model_name_or_obj is a string (load it) or an object (use it)
+        if isinstance(model_name_or_obj, str):
+            model = whisper.load_model(model_name_or_obj)
+        else:
+            model = model_name_or_obj
+
+        # If a lock is provided, use it for the transcription part (GPU access)
+        if lock:
+            with lock:
+                result = model.transcribe(audio_file)
+        else:
+            result = model.transcribe(audio_file)
+            
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(result["text"])
         # This print is often within a task, color will be handled there or in calling function
@@ -118,7 +130,7 @@ def process_single_video(url=None, model=None, download_video=None):
     os.makedirs(mp3_dir, exist_ok=True)
     os.makedirs(trans_dir, exist_ok=True)
     # Prepare filenames
-    mp3_filename = sanitize_filename(title, 50) + ".mp3"
+    mp3_filename = sanitize_filename(title, 50) + ".m4a"
     mp3_path = os.path.join(mp3_dir, mp3_filename)
     now = datetime.now()
     date_str = now.strftime("%d-%b-%Y")
@@ -218,7 +230,7 @@ def download_channel_history_json(url=None):
     print(f"{Fore.GREEN}Done.{Style.RESET_ALL}")
 
 # --- Helper function for processing a single video in parallel ---
-def process_video_task(video_info, mp3_dir, trans_dir, logf):
+def process_video_task(video_info, mp3_dir, trans_dir, logf, model, lock):
     """Downloads and transcribes a single video. Returns status and message."""
     video_id = video_info['id']
     video_url = f"https://www.youtube.com/watch?v={video_id}"
@@ -229,7 +241,7 @@ def process_video_task(video_info, mp3_dir, trans_dir, logf):
     sanitized_title = sanitize_filename(title, 50)
     view_count_str = f"{view_count}views" if view_count is not None else "UnknownViews"
     base_filename = f"{sanitized_title}_{view_count_str}_{video_id}"
-    mp3_filename = f"{base_filename}.mp3"
+    mp3_filename = f"{base_filename}.m4a"
     txt_filename = f"{base_filename}.txt"
     mp3_path = os.path.join(mp3_dir, mp3_filename)
     txt_path = os.path.join(trans_dir, txt_filename)
@@ -250,7 +262,7 @@ def process_video_task(video_info, mp3_dir, trans_dir, logf):
     # --- Transcribe Audio ---
     print(f"{Fore.WHITE}[{video_id}] Transcribing audio...{Style.RESET_ALL}")
     # Using 'base' model for consistency
-    ok, err = transcribe_audio(mp3_path, "base", txt_path)
+    ok, err = transcribe_audio(mp3_path, model, txt_path, lock)
     if not ok:
         msg = f"Transcription error for {title} ({video_id}): {err}"
         print(f"{Fore.RED + Style.BRIGHT}[{video_id}] {msg}{Style.RESET_ALL}")
@@ -376,6 +388,18 @@ def process_channel_videos(url=None, limit=None, workers=None):
 
     print(f"\n{Fore.BLUE}Starting processing. Aiming to ensure the latest {num_videos_target} videos are processed using up to {max_workers} workers.{Style.RESET_ALL}")
 
+    # --- Load Model ONCE ---
+    print(f"{Fore.MAGENTA}Loading Whisper model 'base' into GPU memory (shared for all workers)...{Style.RESET_ALL}")
+    try:
+        shared_model = whisper.load_model("base")
+        print(f"{Fore.MAGENTA}Model loaded successfully on {shared_model.device}.{Style.RESET_ALL}")
+    except Exception as e:
+        print(f"{Fore.RED}Error loading model: {e}{Style.RESET_ALL}")
+        return
+
+    # Create a lock for GPU access
+    gpu_lock = threading.Lock()
+
     # --- Use ThreadPoolExecutor for parallel processing ---
     # Using ThreadPoolExecutor as downloading is I/O bound, transcription might be CPU/GPU bound
     # but GIL might limit true CPU parallelism in threads for transcription part.
@@ -422,7 +446,7 @@ def process_channel_videos(url=None, limit=None, workers=None):
                 # --- Submit task to executor ---
                 print(f"{Fore.BLUE}  - Submitting task for video {video_id}...{Style.RESET_ALL}")
                 # Pass necessary info to the task function
-                future = executor.submit(process_video_task, video, mp3_dir, trans_dir, logf)
+                future = executor.submit(process_video_task, video, mp3_dir, trans_dir, logf, shared_model, gpu_lock)
                 futures.append(future)
                 videos_to_process_list.append(video_id) # Track submitted video
 

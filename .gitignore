@@ -4,6 +4,7 @@ venv/
 env/
 .env/
 yt-transcriber-venv/
+suxxtext-venv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
