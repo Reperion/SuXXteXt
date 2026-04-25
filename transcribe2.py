@@ -76,7 +76,7 @@ def download_audio(youtube_url, output_file):
     # Download audio from YouTube using yt-dlp
     try:
         subprocess.run([
-            "yt-dlp", "-f", "bestaudio[ext=m4a]/bestaudio", "-o", output_file, youtube_url
+            "yt-dlp", "--remote-components", "ejs:github", "-f", "bestaudio[ext=m4a]/bestaudio", "-o", output_file, youtube_url
         ], check=True)
         return True, None
     except subprocess.CalledProcessError as e:
@@ -114,6 +114,7 @@ def get_channel_videos(channel_url, max_videos=10):
         'skip_download': True,
         'quiet': True,
         'force_generic_extractor': False,
+        'remote_components': 'ejs:github',
     }
     with yt_dlp.YoutubeDL(ytdlp_opts) as ydl:
         info = ydl.extract_info(channel_url, download=False)
@@ -143,7 +144,7 @@ def process_single_video(url=None, model=None, download_video=None):
     # Get video info
     print(f"{Fore.BLUE}Getting video info...{Style.RESET_ALL}")
     import yt_dlp
-    ytdlp_opts = {'skip_download': True, 'quiet': True}
+    ytdlp_opts = {'skip_download': True, 'quiet': True, 'remote_components': 'ejs:github'}
     with yt_dlp.YoutubeDL(ytdlp_opts) as ydl:
         info = ydl.extract_info(youtube_url, download=False)
         title = info.get('title', 'video')
@@ -182,6 +183,7 @@ def process_single_video(url=None, model=None, download_video=None):
         try:
             subprocess.run([
                 "yt-dlp",
+                "--remote-components", "ejs:github",
                 "-f", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[ext=mp4]",
                 "--merge-output-format", "mp4",
                 "-o", video_path,
