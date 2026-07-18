@@ -1,44 +1,56 @@
 #!/usr/bin/env python3
-"""Smoke checks for SuXXTeXt imports and helpers (no network, no audio)."""
+"""Smoke checks for SuXXTeXt package imports and pure helpers (no network)."""
+
 import sys
 
 
 def main():
     errors = []
-
     try:
         import yt_dlp  # noqa: F401
-        print(f"ok yt-dlp import")
+
+        print("ok yt-dlp import")
     except Exception as e:
         errors.append(f"yt-dlp: {e}")
 
     try:
         from youtube_transcript_api import YouTubeTranscriptApi  # noqa: F401
+
         print("ok youtube-transcript-api import")
     except Exception as e:
         errors.append(f"youtube-transcript-api: {e}")
 
     try:
         from faster_whisper import WhisperModel  # noqa: F401
+
         print("ok faster-whisper import")
     except Exception as e:
         errors.append(f"faster-whisper: {e}")
 
     try:
-        import transcribe2 as t
-        assert t.channel_handle_from_url("https://www.youtube.com/@Drberg/videos") == "Drberg"
-        dev, ct = t.get_whisper_runtime()
-        print(f"ok transcribe2 helpers (whisper runtime: {dev}/{ct})")
+        from suxxtext.paths import channel_handle_from_url, resolve_channel_folder
+        from suxxtext.whisper_runtime import get_whisper_runtime
+        from suxxtext.youtube import extract_video_id, resolve_yt_dlp
+        from suxxtext.cli import build_parser
+
+        assert channel_handle_from_url("https://www.youtube.com/@Drberg/videos") == "Drberg"
+        assert extract_video_id("https://youtu.be/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+        assert resolve_yt_dlp()
+        assert build_parser()
+        dev, ct = get_whisper_runtime()
+        print(f"ok suxxtext package (whisper runtime: {dev}/{ct})")
+        print(f"ok resolve_channel_folder sample: {resolve_channel_folder(channel_url='https://www.youtube.com/@Drberg/videos')}")
     except Exception as e:
-        errors.append(f"transcribe2: {e}")
+        errors.append(f"suxxtext: {e}")
 
     try:
-        import yt_tldw as tldw
-        assert tldw.extract_video_id("https://youtu.be/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
-        assert tldw.resolve_yt_dlp()
-        print(f"ok yt_tldw helpers (yt-dlp: {tldw.resolve_yt_dlp()})")
+        import transcribe2
+
+        assert hasattr(transcribe2, "sanitize_filename")
+        assert hasattr(transcribe2, "main")
+        print("ok transcribe2 re-exports")
     except Exception as e:
-        errors.append(f"yt_tldw: {e}")
+        errors.append(f"transcribe2: {e}")
 
     if errors:
         print("FAILED:")

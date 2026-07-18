@@ -124,3 +124,6 @@ Desktop.ini
 # Project-specific: Exclude channels directory
 channels/
 backup/
+transcripts/
+*.bak*
+

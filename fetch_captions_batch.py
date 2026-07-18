@@ -17,24 +17,19 @@ New in v2:
   - Better backoff: exponential 5→60s, not flat 120s across 444 videos.
   - Instant skip on known-no-captions videos (transcript API returns block).
 """
-import argparse, json, os, re, sys, time, subprocess, tempfile, glob
+import argparse, json, os, re, sys, time, subprocess
+
+from suxxtext.paths import sanitize_filename
+from suxxtext.youtube import resolve_yt_dlp
 
 # ── Config ─────────────────────────────────────────────────────────────────
-_HERE = os.path.dirname(os.path.abspath(__file__))
-VENV_PYTHON = os.path.join(_HERE, "suxxtext-venv", "bin", "python3")
-YT_DLP = [VENV_PYTHON, "-m", "yt_dlp"] if os.path.exists(VENV_PYTHON) else ["yt-dlp"]
+YT_DLP = resolve_yt_dlp()
 # Optional: Chrome cookies raise rate limits. Disabled unless --cookies-from-browser is set.
 COOKIE_OPTS = []
 MAX_RETRIES = 3
 CONSECUTIVE_429_LIMIT = 3  # abort after this many 429s in a row
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
-
-def sanitize_filename(name, max_length=50):
-    keep = (" ", ".", "_", "-")
-    s = "".join(c if c.isalnum() or c in keep else "_" for c in name)
-    s = s.strip().replace(" ", "_")
-    return s[:max_length] + "..." if len(s) > max_length else s
 
 def is_short(video_entry):
     """Heuristic: videos under 60s duration are likely Shorts."""

@@ -36,17 +36,27 @@ Get up and running in seconds.
 git clone https://github.com/Reperion/SuXXteXt.git
 cd SuXXteXt
 
-# 2. Install dependencies
+# 2. Virtualenv + deps
+python3 -m venv suxxtext-venv
+source suxxtext-venv/bin/activate
 pip install -r requirements.txt
 
-# 3. Run the tool
+# 3. Run (interactive menu — paste a channel link when prompted)
+python -m suxxtext
+# same as:
 python3 transcribe2.py
+./run.sh
 ```
 
-*Or use the included wrapper script:*
-```bash
-chmod +x run.sh
-./run.sh
+### Package layout
+
+```
+suxxtext/           # library (paths, youtube, whisper, captions, jobs, cli)
+transcribe2.py      # thin backward-compatible entry
+yt_tldw.py          # captions-first TL;DW pipeline
+fetch_captions_batch.py
+yt_channel_analyzer.py
+tests/              # unit tests (no network)
 ```
 
 ---

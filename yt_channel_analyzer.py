@@ -7,7 +7,7 @@ import glob # Added glob
 import os # Ensure os is imported as it's used by new functions
 import sys # Import sys for sys.exit()
 import colorama # Import colorama for colored output
-from transcribe2 import sanitize_filename # Import sanitize_filename
+from suxxtext.paths import sanitize_filename
 
 colorama.init(autoreset=True) # Initialize colorama
 
