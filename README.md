@@ -115,6 +115,52 @@ Transcript filenames include the **video id** so re-runs and batch mode can skip
 Uses **faster-whisper** with **CUDA float16** when a GPU is available, otherwise CPU int8.  
 Batch mode accepts `--model` (default `base`) and `--model_instances` for parallel loads.
 
+Keep **yt-dlp** current (YouTube breaks old builds often):
+
+```bash
+pip install -U "yt-dlp>=2026.7.4"
+# or inside the project venv:
+source suxxtext-venv/bin/activate && pip install -U yt-dlp
+```
+
+---
+
+## 🧰 Extra tools (same repo)
+
+| Script | What it does | When to use it |
+| :--- | :--- | :--- |
+| **`transcribe2.py`** | Download audio + Whisper STT; channel batch; history JSON; stats | Offline / no captions / highest quality archive |
+| **`yt_tldw.py`** | **TL;DW** — grab **existing YouTube captions** first (fast, no GPU), optional Whisper fallback; channel latest-N; JSON summary on stdout | Quick digests, pipelines, “just give me the text” |
+| **`fetch_captions_batch.py`** | Walk a saved `*-full-history.json`, pull captions into `channels/.../transcriptions/`, rate-limit + optional Whisper | Bulk backfill of an archive without re-downloading audio |
+| **`yt_channel_analyzer.py`** | HTML stats from channel history JSON | Analytics reports |
+
+### TL;DW quick examples
+
+```bash
+# One video → ./transcripts/<id>/{transcript.txt, transcript_timed.txt, metadata.json}
+python3 yt_tldw.py --url "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Latest 3 from a channel (captions only)
+python3 yt_tldw.py --channel "@HubermanLabClips" --limit 3 --delay 2
+
+# Captions missing? Fall back to Whisper (uses faster-whisper if installed)
+python3 yt_tldw.py --url "VIDEO_ID" --fallback-whisper --whisper-model base
+
+# Discover only
+python3 yt_tldw.py --channel "@Drberg" --limit 5 --dry-run
+```
+
+### Caption backfill from history JSON
+
+```bash
+python3 fetch_captions_batch.py \
+  --json channels/HubermanLabClips/HubermanLabClips-full-history.json \
+  --limit 20 --delay 5
+
+# Optional browser cookies for yt-dlp sub-checks / higher limits
+python3 fetch_captions_batch.py --json ... --limit 10 --cookies-from-browser chrome
+```
+
 ---
 
 ## 📜 License & Credits
