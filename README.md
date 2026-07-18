@@ -51,13 +51,36 @@ python3 transcribe2.py
 ### Package layout
 
 ```
-suxxtext/           # library (paths, youtube, whisper, captions, jobs, cli)
+suxxtext/           # library (paths, youtube, whisper, captions, jobs, pcs, cli)
 transcribe2.py      # thin backward-compatible entry
 yt_tldw.py          # captions-first TL;DW pipeline
 fetch_captions_batch.py
 yt_channel_analyzer.py
 tests/              # unit tests (no network)
 ```
+
+### PCS summaries (Ollama / Gemma) — problem · cause · solution
+
+After transcripts exist, extract **fluff-free** health cards with local Ollama
+(default model: `gemma4:e4b`). Built for Dr. Berg–style videos; ready to wire into the main CLI later.
+
+```bash
+# prerequisites: ollama serve + model pulled (e.g. ollama pull gemma4:e4b)
+export PYTHONPATH=.
+python -m suxxtext.pcs --check
+
+# batch a channel archive
+python -m suxxtext.pcs --channel Drberg
+
+# one file
+python -m suxxtext.pcs --file channels/Drberg/transcriptions/SOME.txt --channel Drberg
+
+# symptom search over index.jsonl
+python -m suxxtext.pcs --channel Drberg --search gout
+```
+
+Writes `channels/<Channel>/summaries/<video_id>.json` plus `index.jsonl`.
+Each card: **problem**, **cause**, **solution**, optional **symptoms** keywords.
 
 ---
 
