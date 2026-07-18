@@ -1,5 +1,8 @@
 #!/bin/bash
-# run.sh - Wrapper for SuXXTeXt (activates venv + launches CLI)
+# run.sh - SuXXTeXt launcher (venv + CLI)
+#   ./run.sh              interactive (auto-tmux if no TTY)
+#   ./run.sh --tmux       force persistent tmux session
+#   ./run.sh --mode ...   non-interactive modes
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
