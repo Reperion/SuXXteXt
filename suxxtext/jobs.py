@@ -16,7 +16,6 @@ from suxxtext.paths import (
     sanitize_filename,
     transcript_exists_for_id,
 )
-from suxxtext.prompting import prompt
 from suxxtext.whisper_runtime import ModelPool, transcribe_audio
 from suxxtext.youtube import (
     download_audio,
@@ -85,14 +84,16 @@ def process_single_video(
 ):
     """Process one video. None args → interactive prompts."""
     if url is None:
-        youtube_url = prompt(f"{Fore.CYAN}Enter YouTube video URL: {Style.RESET_ALL}")
+        youtube_url = input(f"{Fore.CYAN}Enter YouTube video URL: {Style.RESET_ALL}").strip()
     else:
         youtube_url = url
 
     if model is None:
-        model_name = prompt(
-            f"{Fore.CYAN}Enter Whisper model name (tiny, base, small, medium, large) [base]: {Style.RESET_ALL}",
-            default="base",
+        model_name = (
+            input(
+                f"{Fore.CYAN}Enter Whisper model name (tiny, base, small, medium, large) [base]: {Style.RESET_ALL}"
+            ).strip()
+            or "base"
         )
     else:
         model_name = model
@@ -122,11 +123,10 @@ def process_single_video(
         return
 
     if download_video is None:
-        choice = prompt(
-            f"{Fore.CYAN}Download low-resolution video as well? (yes/no) [default: no]: {Style.RESET_ALL}",
-            default="no",
-        ).lower()
-        should_download_video = choice in ("y", "yes")
+        choice = input(
+            f"{Fore.CYAN}Download low-resolution video as well? (yes/no) [default: no]: {Style.RESET_ALL}"
+        ).strip().lower()
+        should_download_video = choice == "yes"
     else:
         should_download_video = bool(download_video)
 
@@ -162,7 +162,7 @@ def download_channel_history_json(url: Optional[str] = None):
             f"{Fore.YELLOW}NOTE: The channel URL should be in this format: "
             f"https://www.youtube.com/@channelname/videos{Style.RESET_ALL}"
         )
-        channel_url = prompt(f"{Fore.CYAN}Enter YouTube channel URL: {Style.RESET_ALL}")
+        channel_url = input(f"{Fore.CYAN}Enter YouTube channel URL: {Style.RESET_ALL}").strip()
     else:
         channel_url = url
 
@@ -201,7 +201,7 @@ def process_channel_videos(
             f"{Fore.YELLOW}NOTE: The channel URL should be in this format: "
             f"https://www.youtube.com/@channelname/videos{Style.RESET_ALL}"
         )
-        channel_url = prompt(f"{Fore.CYAN}Enter YouTube channel URL: {Style.RESET_ALL}")
+        channel_url = input(f"{Fore.CYAN}Enter YouTube channel URL: {Style.RESET_ALL}").strip()
     else:
         channel_url = url
 
@@ -219,18 +219,18 @@ def process_channel_videos(
     print(f"{Fore.WHITE}Found {total_videos_found} videos in the channel.{Style.RESET_ALL}")
 
     if limit is None:
-        default_n = min(10, total_videos_found)
-        num_videos_str = prompt(
+        num_videos_str = input(
             f"{Fore.CYAN}How many of the latest videos do you want to ensure are processed "
-            f"(enter 'all' or a number)? [default {default_n}]: {Style.RESET_ALL}",
-            default=str(default_n),
-        )
+            f"(enter 'all' or a number)? [default {min(10, total_videos_found)}]: {Style.RESET_ALL}"
+        ).strip()
         if num_videos_str.lower() == "all":
             num_videos_target = total_videos_found
             print(f"{Fore.BLUE}Processing all {total_videos_found} videos.{Style.RESET_ALL}")
         else:
             try:
-                num_videos_target = int(num_videos_str)
+                num_videos_target = (
+                    int(num_videos_str) if num_videos_str else min(10, total_videos_found)
+                )
                 if num_videos_target > total_videos_found:
                     print(
                         f"{Fore.YELLOW}Requested number ({num_videos_target}) is more than found "
@@ -257,12 +257,11 @@ def process_channel_videos(
         print(f"{Fore.BLUE}Processing {num_videos_target} videos.{Style.RESET_ALL}")
 
     if workers is None:
-        concurrency_str = prompt(
-            f"{Fore.CYAN}Enter the number of videos to process concurrently [default 4, max 32]: {Style.RESET_ALL}",
-            default="4",
-        )
+        concurrency_str = input(
+            f"{Fore.CYAN}Enter the number of videos to process concurrently [default 4, max 32]: {Style.RESET_ALL}"
+        ).strip()
         try:
-            max_workers = int(concurrency_str)
+            max_workers = int(concurrency_str) if concurrency_str else 4
             if max_workers <= 0:
                 max_workers = 4
             elif max_workers > 32:
@@ -277,12 +276,11 @@ def process_channel_videos(
 
     # Safer GPU default: 1 model unless user overrides (downloads still concurrent)
     if model_instances is None:
-        model_count_str = prompt(
-            f"{Fore.CYAN}Enter number of model instances to load [default 1]: {Style.RESET_ALL}",
-            default="1",
-        )
+        model_count_str = input(
+            f"{Fore.CYAN}Enter number of model instances to load [default 1]: {Style.RESET_ALL}"
+        ).strip()
         try:
-            pool_size = int(model_count_str)
+            pool_size = int(model_count_str) if model_count_str else 1
         except ValueError:
             pool_size = 1
     else:
