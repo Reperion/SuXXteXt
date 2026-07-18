@@ -34,24 +34,28 @@ def test_title_strips_noise():
 
 def test_parse_single_object():
     items = parse_pcs_response(
-        '{"problem":"Bloating","cause":"Low stomach acid","solution":"ACV before meals","symptoms":["gas","bloating"]}'
+        '{"problem":"Bloating","cause":"Low stomach acid","solution":"ACV before meals",'
+        '"symptoms":["gas","bloating"],"related":["SIBO","betaine HCl"]}'
     )
     assert len(items) == 1
     assert items[0].problem == "Bloating"
     assert "ACV" in items[0].solution
     assert "bloating" in items[0].symptoms
+    assert "SIBO" in items[0].related
 
 
 def test_parse_items_array():
     raw = """
     {"items": [
-      {"problem": "A", "cause": "B", "solution": "C"},
-      {"problem": "D", "cause": "E", "solution": "F", "symptoms": ["x"]}
+      {"problem": "A", "cause": "B", "solution": "C", "related": ["r1"]},
+      {"problem": "D", "cause": "E", "solution": "F", "symptoms": ["x"], "adjacent": ["r2"]}
     ]}
     """
     items = parse_pcs_response(raw)
     assert len(items) == 2
     assert items[1].symptoms == ["x"]
+    assert items[0].related == ["r1"]
+    assert items[1].related == ["r2"]
 
 
 def test_parse_rejects_empty():
@@ -81,6 +85,7 @@ def test_index_search(tmp_path: Path):
           "cause": "High uric acid",
           "solution": "Cherry juice and avoid sugar",
           "symptoms": ["gout", "toe pain"],
+          "related": ["uric acid", "fructose"],
           "items": [],
           "model": "gemma4:e4b",
           "created_at": "2026-01-01T00:00:00+00:00"
@@ -92,4 +97,6 @@ def test_index_search(tmp_path: Path):
     hits = search_index(sdir, "gout")
     assert len(hits) == 1
     assert hits[0]["solution"].startswith("Cherry")
+    assert hits[0]["related"] == ["uric acid", "fructose"]
+    assert search_index(sdir, "fructose")  # related bucket is searchable
     assert search_index(sdir, "zzzz-nope") == []

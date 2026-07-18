@@ -80,7 +80,8 @@ python -m suxxtext.pcs --channel Drberg --search gout
 ```
 
 Writes `channels/<Channel>/summaries/<video_id>.json` plus `index.jsonl`.
-Each card: **problem**, **cause**, **solution**, optional **symptoms** keywords.
+Each card: **problem**, **cause**, **solution** (~45–50 words each), **symptoms**,
+and **related** (adjacent topics / side mentions for search).
 
 ---
 

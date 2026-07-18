@@ -30,29 +30,42 @@ from suxxtext.paths import CHANNELS_ROOT
 # YouTube video ids are 11 chars; transcript names usually end with _ID.txt
 VIDEO_ID_RE = re.compile(r"([A-Za-z0-9_-]{11})\.txt$")
 
+# ~40 words × 1.15 ≈ 46; allow a little headroom for natural phrasing
+FIELD_WORD_BUDGET = 50
+
 SYSTEM_PROMPT = """You are a precise medical-content extractor for Dr. Eric Berg style health videos.
 Your job is NOT to invent advice. Extract only what the speaker claims.
 
 Return ONLY a JSON object (no markdown, no commentary) with this shape:
 {
-  "problem": "the main symptom or condition the video addresses (short)",
-  "cause": "the root cause the speaker attributes (short)",
-  "solution": "concrete fix: food to eat/avoid, exercise, habit, or protocol (short)",
-  "symptoms": ["optional", "search", "keywords"]
+  "problem": "main symptom or condition (a bit fuller than a headline)",
+  "cause": "root cause the speaker attributes, with enough mechanism to be useful",
+  "solution": "concrete fix: food to eat/avoid, exercise, dose/habit, or protocol",
+  "symptoms": ["search", "keywords"],
+  "related": ["adjacent topics, side effects, related conditions, or linked tips from the talk"]
 }
 
 Rules:
-- Be fluff-free. Each of problem/cause/solution under ~40 words.
-- solution must be actionable (eat X, stop Y, do Z) when the speaker gives one.
+- Fluff-free but not telegraphic. Each of problem / cause / solution should be about
+  45–50 words max (roughly 15% more detail than a one-liner). Prefer one tight
+  sentence or two short ones; include key numbers, foods, or steps when the speaker
+  gives them.
+- solution must be actionable (eat X, stop Y, do Z, supplement W) when the speaker gives one.
+- related: 2–8 short phrases for ADJACENT content — side mentions, related conditions,
+  caveats, "also covers", industry myths debunked, or natural next topics a viewer
+  with this problem would care about. Prefer phrases grounded in the transcript;
+  if the talk clearly implies an adjacent angle, you may note it briefly. Empty list
+  only if nothing adjacent appears.
 - If the speaker covers multiple independent problems, use:
-  {"items": [{"problem":"...","cause":"...","solution":"...","symptoms":[...]}, ...]}
-  Max 5 items; put the primary topic first.
+  {"items": [{"problem":"...","cause":"...","solution":"...","symptoms":[...],"related":[...]}, ...]}
+  Max 5 items; put the primary topic first. related on each item is local to that tip;
+  you may also put shared adjacent themes on the primary item.
 - symptoms: 2–8 short keywords a patient might search (e.g. bloating, gout, fatigue).
 - If the transcript is empty or not health advice, still fill the three fields honestly
-  (e.g. problem: "unclear / not health advice").
+  (e.g. problem: "unclear / not health advice") and related: [].
 """
 
-USER_TEMPLATE = """Extract problem / cause / solution from this transcript.
+USER_TEMPLATE = """Extract problem / cause / solution / related from this transcript.
 
 Title: {title}
 Video id: {video_id}
@@ -63,12 +76,23 @@ Video id: {video_id}
 """
 
 
+def _str_list(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [s.strip() for s in re.split(r"[,;|]", raw) if s.strip()]
+    if isinstance(raw, list):
+        return [str(s).strip() for s in raw if str(s).strip()]
+    return []
+
+
 @dataclass
 class PCSItem:
     problem: str
     cause: str
     solution: str
     symptoms: List[str] = field(default_factory=list)
+    related: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -76,6 +100,7 @@ class PCSItem:
             "cause": self.cause.strip(),
             "solution": self.solution.strip(),
             "symptoms": [s.strip() for s in self.symptoms if str(s).strip()],
+            "related": [s.strip() for s in self.related if str(s).strip()],
         }
 
 
@@ -107,6 +132,7 @@ class PCSRecord:
             "cause": primary.cause,
             "solution": primary.solution,
             "symptoms": primary.symptoms,
+            "related": primary.related,
             "items": [i.to_dict() for i in self.items],
         }
         return d
@@ -115,7 +141,9 @@ class PCSRecord:
         """Single lowercase string for naive symptom search."""
         parts: List[str] = []
         for it in self.items:
-            parts.extend([it.problem, it.cause, it.solution, *it.symptoms])
+            parts.extend(
+                [it.problem, it.cause, it.solution, *it.symptoms, *it.related]
+            )
         return " ".join(parts).lower()
 
 
@@ -152,18 +180,19 @@ def _coerce_item(obj: Any) -> Optional[PCSItem]:
     solution = str(obj.get("solution") or obj.get("Solution") or "").strip()
     if not (problem or cause or solution):
         return None
-    symptoms_raw = obj.get("symptoms") or obj.get("keywords") or []
-    if isinstance(symptoms_raw, str):
-        symptoms = [s.strip() for s in re.split(r"[,;|]", symptoms_raw) if s.strip()]
-    elif isinstance(symptoms_raw, list):
-        symptoms = [str(s).strip() for s in symptoms_raw if str(s).strip()]
-    else:
-        symptoms = []
+    symptoms = _str_list(obj.get("symptoms") or obj.get("keywords"))
+    related = _str_list(
+        obj.get("related")
+        or obj.get("adjacent")
+        or obj.get("related_topics")
+        or obj.get("also")
+    )
     return PCSItem(
         problem=problem or "(unspecified)",
         cause=cause or "(unspecified)",
         solution=solution or "(unspecified)",
         symptoms=symptoms,
+        related=related,
     )
 
 
@@ -278,7 +307,7 @@ def extract_pcs_from_text(
         system=SYSTEM_PROMPT,
         format_json=True,
         temperature=temperature,
-        num_predict=1200,
+        num_predict=1600,
         timeout=timeout,
     )
     items = parse_pcs_response(raw)
@@ -332,6 +361,7 @@ def summarize_transcript_file(
                     cause=str(i.get("cause", "")),
                     solution=str(i.get("solution", "")),
                     symptoms=list(i.get("symptoms") or []),
+                    related=list(i.get("related") or []),
                 )
                 for i in existing["items"]
             ]
@@ -342,6 +372,7 @@ def summarize_transcript_file(
                     cause=str(existing.get("cause", "")),
                     solution=str(existing.get("solution", "")),
                     symptoms=list(existing.get("symptoms") or []),
+                    related=list(existing.get("related") or []),
                 )
             ]
         return PCSRecord(
@@ -408,6 +439,7 @@ def rebuild_index(summaries_dir: str | Path) -> Path:
             "cause": data.get("cause"),
             "solution": data.get("solution"),
             "symptoms": data.get("symptoms") or [],
+            "related": data.get("related") or [],
             "items": data.get("items") or [],
             "model": data.get("model"),
             "created_at": data.get("created_at"),
@@ -474,10 +506,12 @@ def batch_summarize_channel(
                 force=force,
             )
             primary = rec.primary()
+            rel = "; ".join(primary.related[:4]) if primary.related else "(none)"
             print(
-                f"  → problem: {primary.problem[:80]}\n"
-                f"    cause:   {primary.cause[:80]}\n"
-                f"    solution:{primary.solution[:80]}",
+                f"  → problem:  {primary.problem[:90]}\n"
+                f"    cause:    {primary.cause[:90]}\n"
+                f"    solution: {primary.solution[:90]}\n"
+                f"    related:  {rel[:90]}",
                 flush=True,
             )
             results.append(rec)
