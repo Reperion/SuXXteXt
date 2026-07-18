@@ -1,6 +1,7 @@
 import subprocess
-import whisper
+from faster_whisper import WhisperModel
 import os
+import re
 from datetime import datetime
 import concurrent.futures # Added for parallel processing
 import time # Added for potential delays
@@ -13,6 +14,9 @@ import queue # Added for ModelPool
 import contextlib # Added for ModelPool context manager
 
 colorama.init(autoreset=True)
+
+CHANNELS_ROOT = "channels"
+
 
 def print_header_and_clear():
     os.system('cls' if os.name == 'nt' else 'clear') # Clear the terminal
@@ -27,31 +31,69 @@ def print_header_and_clear():
 """
     print(f"{Fore.GREEN + Style.BRIGHT}{ascii_art}{Style.RESET_ALL}")
 
-    print(f"{Fore.GREEN + Style.BRIGHT}{ascii_art}{Style.RESET_ALL}")
-
 def print_subtext():
     subtext = f"""
 {Fore.GREEN}SuXXTeXt extracts audio/video from YouTube videos and transcribes them to text using Whisper.
 Process single videos or batch process any number videos from a channel.
-Files are organized into 'channels/[ChannelName]/mp3' ./transcriptions' and ./videos.
+Files are organized into 'channels/[ChannelHandle]/mp3' and './transcriptions'.
 Download full channel history as json file.
 
 Choose an option to proceed:
 {Style.RESET_ALL}"""
     print(subtext)
 
+
+def get_whisper_runtime():
+    """Prefer CUDA + float16 when available; fall back to CPU int8."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda", "float16"
+    except Exception:
+        pass
+    return "cpu", "int8"
+
+
+def load_whisper_model(model_name):
+    device, compute_type = get_whisper_runtime()
+    print(f"{Fore.MAGENTA}Loading Whisper '{model_name}' on {device} ({compute_type})...{Style.RESET_ALL}")
+    return WhisperModel(model_name, device=device, compute_type=compute_type)
+
+
 class ModelPool:
     def __init__(self, model_name, pool_size):
         self.pool = queue.Queue()
         self.pool_size = pool_size
-        print(f"{Fore.MAGENTA}Initializing Model Pool with {pool_size} instances of '{model_name}'...{Style.RESET_ALL}")
+        self.device, self.compute_type = get_whisper_runtime()
+        print(
+            f"{Fore.MAGENTA}Initializing Model Pool: {pool_size} x '{model_name}' "
+            f"on {self.device} ({self.compute_type})...{Style.RESET_ALL}"
+        )
         for i in range(pool_size):
             try:
-                # Load model. Whisper automatically picks cuda if available.
-                model = whisper.load_model(model_name)
+                model = WhisperModel(
+                    model_name, device=self.device, compute_type=self.compute_type
+                )
                 self.pool.put(model)
-                print(f"{Fore.MAGENTA}  - Loaded model instance {i+1}/{pool_size} on {model.device}{Style.RESET_ALL}")
+                print(f"{Fore.MAGENTA}  - Loaded model instance {i+1}/{pool_size}{Style.RESET_ALL}")
             except Exception as e:
+                # CUDA OOM / missing kernels: fall back to CPU for remaining loads
+                if self.device != "cpu":
+                    print(
+                        f"{Fore.YELLOW}GPU load failed ({e}); falling back to CPU int8 "
+                        f"for remaining instances...{Style.RESET_ALL}"
+                    )
+                    self.device, self.compute_type = "cpu", "int8"
+                    try:
+                        model = WhisperModel(
+                            model_name, device=self.device, compute_type=self.compute_type
+                        )
+                        self.pool.put(model)
+                        print(f"{Fore.MAGENTA}  - Loaded model instance {i+1}/{pool_size} on CPU{Style.RESET_ALL}")
+                        continue
+                    except Exception as e2:
+                        print(f"{Fore.RED}Error loading model instance {i+1}: {e2}{Style.RESET_ALL}")
+                        raise e2
                 print(f"{Fore.RED}Error loading model instance {i+1}: {e}{Style.RESET_ALL}")
                 raise e
 
@@ -63,6 +105,7 @@ class ModelPool:
         finally:
             self.pool.put(model)
 
+
 def sanitize_filename(name, max_length=50):
     # Remove/replace problematic characters and truncate
     keepchars = (" ", ".", "_", "-")
@@ -72,35 +115,186 @@ def sanitize_filename(name, max_length=50):
         sanitized = sanitized[:max_length] + "..."
     return sanitized
 
+
+def _alnum_key(s):
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _alnum_related(a, b):
+    """True if alnum keys are the same, one contains the other, or short is a subsequence of long.
+
+    Subsequence helps title folders (DrEricBergDC) match handle folders (Drberg).
+    """
+    if not a or not b:
+        return False
+    if a == b or a in b or b in a:
+        return True
+    short, long = (a, b) if len(a) <= len(b) else (b, a)
+    if len(short) < 6:
+        return False
+    it = iter(long)
+    return all(ch in it for ch in short)
+
+
+def channel_handle_from_url(url):
+    """Extract @handle (or last path segment) from a YouTube channel/video page URL."""
+    if not url:
+        return None
+    url = url.strip()
+    m = re.search(r"youtube\.com/@([^/?#]+)", url, re.I)
+    if m:
+        return m.group(1)
+    # strip common tabs
+    cleaned = url.rstrip("/")
+    for suffix in ("/videos", "/streams", "/shorts", "/featured", "/playlists", "/community"):
+        if cleaned.lower().endswith(suffix):
+            cleaned = cleaned[: -len(suffix)]
+            break
+    m = re.search(r"youtube\.com/@([^/?#]+)", cleaned, re.I)
+    if m:
+        return m.group(1)
+    part = cleaned.rstrip("/").split("/")[-1]
+    if part.startswith("@"):
+        return part[1:]
+    # channel/UCxxxx — use id only as last resort (not a nice folder name)
+    if part.startswith("UC") and len(part) >= 22:
+        return part
+    if part and "youtube" not in part.lower() and part not in ("www.youtube.com", "channel", "c", "user"):
+        # /c/Name or bare handle path
+        if not part.startswith("UC"):
+            return part
+    return None
+
+
+def channel_handle_from_info(info):
+    """Prefer @handle from metadata URLs over display title."""
+    if not info:
+        return None
+    for key in ("uploader_url", "channel_url", "webpage_url", "original_url"):
+        handle = channel_handle_from_url(info.get(key) or "")
+        if handle and not (handle.startswith("UC") and len(handle) >= 22):
+            return handle
+    for key in ("uploader_url", "channel_url"):
+        handle = channel_handle_from_url(info.get(key) or "")
+        if handle:
+            return handle
+    return None
+
+
+def resolve_channel_folder(info=None, channel_url=None, channels_root=CHANNELS_ROOT):
+    """
+    Canonical channel archive folder under channels/.
+
+    Prefers @handle (matches batch mode + existing archives). Reuses an existing
+    directory on case-insensitive or alnum-normalized match so single-video runs
+    do not spawn parallel trees (e.g. Dr._Eric_Berg_DC vs Drberg).
+    """
+    handle = None
+    if channel_url:
+        handle = channel_handle_from_url(channel_url)
+    if not handle and info:
+        handle = channel_handle_from_info(info)
+
+    display = None
+    if info:
+        display = info.get("channel") or info.get("uploader") or info.get("title")
+
+    candidates = []
+    if handle:
+        candidates.append(sanitize_filename(handle, 50))
+    if display:
+        d = sanitize_filename(display, 50)
+        # strip trailing " - Videos" etc. from channel listing titles
+        d = re.sub(r"_-_Videos$", "", d)
+        d = re.sub(r"_Videos$", "", d)
+        if d and d not in candidates:
+            candidates.append(d)
+
+    if not candidates:
+        candidates = ["channel"]
+
+    existing = []
+    if os.path.isdir(channels_root):
+        existing = [
+            e for e in os.listdir(channels_root)
+            if os.path.isdir(os.path.join(channels_root, e))
+            and ".bak" not in e.lower()
+            and not e.startswith("_")
+        ]
+
+    # 1) Exact match for any candidate
+    for c in candidates:
+        if c in existing:
+            return c
+
+    # 2) Case-insensitive
+    lower_map = {e.lower(): e for e in existing}
+    for c in candidates:
+        if c.lower() in lower_map:
+            return lower_map[c.lower()]
+
+    # 3) Alnum-normalized (HubermanLabClips == Huberman_Lab_Clips)
+    existing_norm = {_alnum_key(e): e for e in existing}
+    for c in candidates:
+        key = _alnum_key(c)
+        if key and key in existing_norm:
+            return existing_norm[key]
+
+    # 4) Substring match on alnum keys (Drberg ⊂ DrEricBergDC, etc.)
+    # Prefer the *shortest* existing match so we land on handle folders, not long titles.
+    match_keys = list(candidates)
+    if handle:
+        match_keys.append(handle)
+    best = None  # (len(existing_name), existing_name)
+    for c in match_keys:
+        ckey = _alnum_key(c)
+        if not ckey or len(ckey) < 5:
+            continue
+        for e in existing:
+            ekey = _alnum_key(e)
+            if not ekey or len(ekey) < 5:
+                continue
+            if _alnum_related(ckey, ekey):
+                cand = (len(e), e)
+                if best is None or cand < best:
+                    best = cand
+    if best:
+        return best[1]
+
+    # 5) Prefer handle as new folder name (stable with batch/json modes)
+    return candidates[0]
+
+
+def ensure_channel_dirs(channel_folder, channels_root=CHANNELS_ROOT):
+    base = os.path.join(channels_root, channel_folder)
+    mp3_dir = os.path.join(base, "mp3")
+    trans_dir = os.path.join(base, "transcriptions")
+    os.makedirs(mp3_dir, exist_ok=True)
+    os.makedirs(trans_dir, exist_ok=True)
+    return base, mp3_dir, trans_dir
+
+
 def download_audio(youtube_url, output_file):
     # Download audio from YouTube using yt-dlp
     try:
         subprocess.run([
-            "yt-dlp", "--remote-components", "ejs:github", "-f", "bestaudio[ext=m4a]/bestaudio", "-o", output_file, youtube_url
+            "yt-dlp", "-f", "bestaudio[ext=m4a]/bestaudio", "-o", output_file, youtube_url
         ], check=True)
         return True, None
     except subprocess.CalledProcessError as e:
         return False, str(e)
 
+
 def transcribe_audio(audio_file, model_name_or_obj, output_file, lock=None):
     try:
-        # Check if model_name_or_obj is a string (load it) or an object (use it)
         if isinstance(model_name_or_obj, str):
-            model = whisper.load_model(model_name_or_obj)
+            model = load_whisper_model(model_name_or_obj)
         else:
             model = model_name_or_obj
-
-        # If a lock is provided, use it for the transcription part (GPU access)
-        if lock:
-            with lock:
-                result = model.transcribe(audio_file)
-        else:
-            result = model.transcribe(audio_file)
-            
+        segments, _ = model.transcribe(audio_file, beam_size=5)
+        full_text = " ".join([segment.text for segment in segments])
         with open(output_file, "w", encoding="utf-8") as f:
-            f.write(result["text"])
-        # This print is often within a task, color will be handled there or in calling function
-        # print(f"Transcription saved to {output_file}")
+            f.write(full_text)
         return True, None
     except Exception as e:
         return False, str(e)
@@ -114,7 +308,6 @@ def get_channel_videos(channel_url, max_videos=10):
         'skip_download': True,
         'quiet': True,
         'force_generic_extractor': False,
-        'remote_components': 'ejs:github',
     }
     with yt_dlp.YoutubeDL(ytdlp_opts) as ydl:
         info = ydl.extract_info(channel_url, download=False)
@@ -144,27 +337,37 @@ def process_single_video(url=None, model=None, download_video=None):
     # Get video info
     print(f"{Fore.BLUE}Getting video info...{Style.RESET_ALL}")
     import yt_dlp
-    ytdlp_opts = {'skip_download': True, 'quiet': True, 'remote_components': 'ejs:github'}
+    ytdlp_opts = {'skip_download': True, 'quiet': True}
     with yt_dlp.YoutubeDL(ytdlp_opts) as ydl:
         info = ydl.extract_info(youtube_url, download=False)
         title = info.get('title', 'video')
-        channel = info.get('channel', 'channel')
-        channel_folder = sanitize_filename(channel, 50)
-        video_folder = sanitize_filename(title, 50)
-    # Folder structure: channels/channel_folder/mp3, channels/channel_folder/transcriptions
-    base_channel_dir = os.path.join("channels", channel_folder)
-    mp3_dir = os.path.join(base_channel_dir, "mp3")
-    trans_dir = os.path.join(base_channel_dir, "transcriptions")
-    os.makedirs(mp3_dir, exist_ok=True)
-    os.makedirs(trans_dir, exist_ok=True)
-    # Prepare filenames
-    mp3_filename = sanitize_filename(title, 50) + ".m4a"
+        video_id = info.get('id', 'unknown')
+        channel_folder = resolve_channel_folder(info=info)
+    base_channel_dir, mp3_dir, trans_dir = ensure_channel_dirs(channel_folder)
+    print(f"{Fore.BLUE}Channel archive folder: {base_channel_dir}{Style.RESET_ALL}")
+
+    # Filenames include video_id so batch skip logic (id in .txt name) works for singles too
+    sanitized_title = sanitize_filename(title, 50)
+    mp3_filename = f"{sanitized_title}_{video_id}.m4a"
     mp3_path = os.path.join(mp3_dir, mp3_filename)
     now = datetime.now()
     date_str = now.strftime("%d-%b-%Y")
-    txt_filename = f"{date_str}-{sanitize_filename(title, 50)}.txt"
-    txt_path = os.path.join(trans_dir, txt_filename)
+    txt_filename = f"{date_str}-{sanitized_title}_{video_id}.txt"
+    txt_path = os.path.abspath(os.path.join(trans_dir, txt_filename))
+    print(f"{Fore.YELLOW}Saving transcript to: {txt_path}{Style.RESET_ALL}")
 
+    # Skip if this video id was already transcribed in this channel tree
+    try:
+        for existing_file in os.listdir(trans_dir):
+            if video_id in existing_file and existing_file.endswith(".txt"):
+                print(
+                    f"{Fore.YELLOW}Transcription already exists for {video_id}: "
+                    f"{existing_file}. Skipping.{Style.RESET_ALL}"
+                )
+                return
+    except OSError:
+        pass
+    
     # --- Optional Low-Resolution Video Download ---
     if download_video is None:
         download_video_choice = input(f"{Fore.CYAN}Download low-resolution video as well? (yes/no) [default: no]: {Style.RESET_ALL}").strip().lower()
@@ -176,14 +379,13 @@ def process_single_video(url=None, model=None, download_video=None):
         video_dir = os.path.join(base_channel_dir, "video")
         os.makedirs(video_dir, exist_ok=True)
         
-        video_filename = f"{date_str}-{sanitize_filename(title, 50)}.mp4"
+        video_filename = f"{date_str}-{sanitized_title}_{video_id}.mp4"
         video_path = os.path.join(video_dir, video_filename)
 
         print(f"{Fore.BLUE}Downloading low-resolution video to {video_path} ...{Style.RESET_ALL}")
         try:
             subprocess.run([
                 "yt-dlp",
-                "--remote-components", "ejs:github",
                 "-f", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[ext=mp4]",
                 "--merge-output-format", "mp4",
                 "-o", video_path,
@@ -192,7 +394,6 @@ def process_single_video(url=None, model=None, download_video=None):
             print(f"{Fore.GREEN}Low-resolution video saved to {video_path}{Style.RESET_ALL}")
         except subprocess.CalledProcessError as e:
             print(f"{Fore.RED + Style.BRIGHT}Error downloading video: {e}{Style.RESET_ALL}")
-            # Decide if we should continue with audio download if video fails. For now, let's continue.
         except Exception as e:
             print(f"{Fore.RED + Style.BRIGHT}An unexpected error occurred during video download: {e}{Style.RESET_ALL}")
 
@@ -201,7 +402,7 @@ def process_single_video(url=None, model=None, download_video=None):
     ok, err = download_audio(youtube_url, mp3_path)
     if not ok:
         print(f"{Fore.RED + Style.BRIGHT}Error downloading audio: {err}{Style.RESET_ALL}")
-        return # If audio download fails, probably stop.
+        return
 
     print(f"{Fore.BLUE}Transcribing audio...{Style.RESET_ALL}")
     ok, err = transcribe_audio(mp3_path, model_name, txt_path)
@@ -227,24 +428,8 @@ def download_channel_history_json(url=None):
         print(f"{Fore.RED + Style.BRIGHT}Error retrieving channel info: {e}{Style.RESET_ALL}")
         return
 
-    # Determine channel_folder (replicating logic from process_channel_videos)
-    channel_name_for_folder = channel_url
-    if channel_name_for_folder.endswith("/videos"):
-        channel_name_for_folder = channel_name_for_folder[:-7]
-    channel_name_for_folder = channel_name_for_folder.rstrip('/').split('/')[-1]
-    if channel_name_for_folder.startswith('@'):
-        channel_name_for_folder = channel_name_for_folder[1:]
-    # Fallback to actual channel title from metadata if parsing URL is problematic or for better naming
-    # This part can be refined if channel_info contains a more reliable field for folder naming
-    # For now, using the parsed name from URL as per existing logic in process_channel_videos
-    channel_folder = sanitize_filename(channel_name_for_folder, 50)
-    
-    # If channel_info has a title, prefer that for folder name if it's different or more descriptive
-    # This is an area for potential refinement if the URL parsing isn't always ideal for folder names.
-    # For now, sticking to the plan's replication of existing logic.
-
-    base_channel_dir = os.path.join("channels", channel_folder)
-    os.makedirs(base_channel_dir, exist_ok=True)
+    channel_folder = resolve_channel_folder(info=channel_info, channel_url=channel_url)
+    base_channel_dir, _, _ = ensure_channel_dirs(channel_folder)
 
     metadata_filename = f"{channel_folder}-full-history.json"
     metadata_path = os.path.join(base_channel_dir, metadata_filename)
@@ -313,9 +498,9 @@ def process_video_task(video_info, mp3_dir, trans_dir, logf, model_pool, lock=No
 
     return "success", f"Successfully processed {title} ({video_id})"
 
-def process_channel_videos(url=None, limit=None, workers=None, model_instances=None):
+def process_channel_videos(url=None, limit=None, workers=None, model_instances=None, model=None):
     """Process channel videos. If arguments are None, prompt the user interactively."""
-    # import json # Moved to global scope
+    model_name = model or "base"
 
     # Get URL from argument or prompt
     if url is None:
@@ -401,24 +586,12 @@ def process_channel_videos(url=None, limit=None, workers=None, model_instances=N
     
     print(f"{Fore.BLUE}Using {pool_size} parallel model instances.{Style.RESET_ALL}")
 
-    channel_title = channel_info.get('title', 'channel')
-    # Remove trailing '/videos' or similar from the channel_url for folder naming
-    channel_name = channel_url
-    if channel_name.endswith("/videos"):
-        channel_name = channel_name[:-7]
-    # Extract the last part after '/' or '@'
-    channel_name = channel_name.rstrip('/').split('/')[-1]
-    if channel_name.startswith('@'):
-        channel_name = channel_name[1:]
-    channel_folder = sanitize_filename(channel_name, 50)
-    base_channel_dir = os.path.join("channels", channel_folder)
-    mp3_dir = os.path.join(base_channel_dir, "mp3")
-    trans_dir = os.path.join(base_channel_dir, "transcriptions")
-    os.makedirs(mp3_dir, exist_ok=True)
-    os.makedirs(trans_dir, exist_ok=True)
+    channel_folder = resolve_channel_folder(info=channel_info, channel_url=channel_url)
+    base_channel_dir, mp3_dir, trans_dir = ensure_channel_dirs(channel_folder)
+    print(f"{Fore.BLUE}Channel archive folder: {base_channel_dir}{Style.RESET_ALL}")
 
     # Save full metadata
-    metadata_filename = f"{channel_folder}-full-history.json" # Changed to json for easier parsing
+    metadata_filename = f"{channel_folder}-full-history.json"
     metadata_path = os.path.join(base_channel_dir, metadata_filename)
     try:
         with open(metadata_path, "w", encoding="utf-8") as meta_f:
@@ -441,9 +614,9 @@ def process_channel_videos(url=None, limit=None, workers=None, model_instances=N
     print(f"\n{Fore.BLUE}Starting processing. Aiming to ensure the latest {num_videos_target} videos are processed using up to {max_workers} workers.{Style.RESET_ALL}")
 
     # --- Load Model Pool ---
-    print(f"{Fore.MAGENTA}Loading {pool_size} instances of Whisper model 'base' into GPU memory...{Style.RESET_ALL}")
+    print(f"{Fore.MAGENTA}Loading {pool_size} instances of Whisper model '{model_name}'...{Style.RESET_ALL}")
     try:
-        model_pool = ModelPool("base", pool_size)
+        model_pool = ModelPool(model_name, pool_size)
     except Exception as e:
         print(f"{Fore.RED}Error initializing model pool: {e}{Style.RESET_ALL}")
         return
@@ -599,7 +772,13 @@ Examples:
             if not args.url:
                 print(f"{Fore.RED + Style.BRIGHT}Error: --url is required for batch mode{Style.RESET_ALL}")
                 return
-            process_channel_videos(url=args.url, limit=args.limit, workers=args.workers, model_instances=args.model_instances)
+            process_channel_videos(
+                url=args.url,
+                limit=args.limit,
+                workers=args.workers,
+                model_instances=args.model_instances,
+                model=args.model,
+            )
         elif args.mode == 'json':
             if not args.url:
                 print(f"{Fore.RED + Style.BRIGHT}Error: --url is required for json mode{Style.RESET_ALL}")

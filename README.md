@@ -104,6 +104,17 @@ graph LR
 2.  **Batch Processing**: Fetch Channel List -> Filter Existing -> Parallel Transcribe
 3.  **Analytics**: Parse History JSON -> Calculate Stats -> Generate HTML Report
 
+### Channel archive folders
+
+Outputs go under `channels/<handle>/` (YouTube `@handle` when available), not the display title.  
+Single and batch modes share the same resolver so archives do not split (e.g. `Drberg` not `Dr._Eric_Berg_DC`).  
+Transcript filenames include the **video id** so re-runs and batch mode can skip already-done videos.
+
+### Transcription engine
+
+Uses **faster-whisper** with **CUDA float16** when a GPU is available, otherwise CPU int8.  
+Batch mode accepts `--model` (default `base`) and `--model_instances` for parallel loads.
+
 ---
 
 ## 📜 License & Credits
