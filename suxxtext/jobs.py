@@ -35,6 +35,10 @@ from suxxtext.youtube import (
 DEFAULT_WORKERS = 4
 DEFAULT_MODEL_INSTANCES = 2
 MIN_CAPTION_CHARS = 40
+# Safe / paced mode: ~1 video every 3 minutes → ~480/day ceiling
+SAFE_PACE_SECONDS = 180.0
+SAFE_WORKERS = 1
+SAFE_MODEL_INSTANCES = 1
 
 
 def normalize_channel_url(url: str) -> str:
@@ -317,6 +321,8 @@ def process_channel_videos(
     prefer_captions: bool = True,
     whisper_fallback: bool = True,
     caption_delay: float = 0.5,
+    pace_seconds: float = 0.0,
+    safe: bool = False,
 ):
     """
     Batch process latest N channel videos.
@@ -326,9 +332,26 @@ def process_channel_videos(
       2. Try YouTube captions (serial + small delay — kinder to rate limits)
       3. Whisper download+ASR for remaining (concurrent, gentle defaults)
 
+    Safe / paced mode (``safe=True`` or ``pace_seconds>0``):
+      Serial Whisper, sleep so starts are at least ``pace_seconds`` apart
+      (default safe pace = 180s ≈ 480 videos/day). Lower bot-check risk;
+      pair with ``SUXXTEXT_COOKIES_FROM_BROWSER=chrome`` when possible.
+
     None interactive args → prompts. Defaults: 4 workers / 2 Whisper instances.
     """
     model_name = model or "base"
+
+    if safe:
+        # Safe mode is opinionated: serial + 3 min pace (unless --pace overrides)
+        if pace_seconds <= 0:
+            pace_seconds = SAFE_PACE_SECONDS
+        workers = SAFE_WORKERS
+        model_instances = SAFE_MODEL_INSTANCES
+    elif pace_seconds > 0:
+        # Custom pace without --safe still forces serial Whisper
+        workers = SAFE_WORKERS if workers is None else min(int(workers), 1)
+        if model_instances is None:
+            model_instances = SAFE_MODEL_INSTANCES
 
     if url is None:
         print(
@@ -422,7 +445,22 @@ def process_channel_videos(
         mode_note.append("Whisper fallback on miss")
     elif prefer_captions and not whisper_fallback:
         mode_note.append("no Whisper fallback")
+    if pace_seconds > 0:
+        per_day = int(86400 / pace_seconds) if pace_seconds else 0
+        mode_note.append(
+            f"SAFE/paced ≥{pace_seconds:.0f}s between Whisper videos (~{per_day}/day max)"
+        )
     print(f"{Fore.BLUE}Pipeline: {', '.join(mode_note)}{Style.RESET_ALL}")
+    cookies_env = (os.environ.get("SUXXTEXT_COOKIES_FROM_BROWSER") or "").strip()
+    if cookies_env:
+        print(
+            f"{Fore.BLUE}yt-dlp cookies-from-browser: {cookies_env}{Style.RESET_ALL}"
+        )
+    elif pace_seconds > 0 or safe:
+        print(
+            f"{Fore.YELLOW}Tip: export SUXXTEXT_COOKIES_FROM_BROWSER=chrome "
+            f"to reduce bot-checks in safe mode.{Style.RESET_ALL}"
+        )
 
     channel_folder = resolve_channel_folder(info=channel_info, channel_url=channel_url)
     base_channel_dir, mp3_dir, trans_dir = ensure_channel_dirs(channel_folder)
@@ -487,7 +525,8 @@ def process_channel_videos(
         )
         logf.write(
             f"prefer_captions={prefer_captions} whisper_fallback={whisper_fallback} "
-            f"workers={max_workers} models={pool_size} caption_delay={caption_delay}\n"
+            f"workers={max_workers} models={pool_size} caption_delay={caption_delay} "
+            f"pace_seconds={pace_seconds} safe={safe}\n"
         )
 
         # --- Phase 1: skip existing + captions (serial, rate-friendly) ---
@@ -579,26 +618,23 @@ def process_channel_videos(
                 model_pool = None
 
             if model_pool is not None:
-                print(
-                    f"{Fore.BLUE}--- Submitting {len(need_whisper)} Whisper tasks "
-                    f"(up to {max_workers} workers)... ---{Style.RESET_ALL}"
-                )
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    for video in need_whisper:
-                        futures.append(
-                            executor.submit(
-                                process_whisper_only_task,
-                                video,
-                                mp3_dir,
-                                trans_dir,
-                                logf,
-                                model_pool,
-                                None,
-                            )
+                n_w = len(need_whisper)
+                if pace_seconds > 0:
+                    print(
+                        f"{Fore.BLUE}--- Paced Whisper: {n_w} video(s), "
+                        f"≥{pace_seconds:.0f}s between starts (serial)... ---{Style.RESET_ALL}"
+                    )
+                    for i, video in enumerate(need_whisper, 1):
+                        t0 = time.monotonic()
+                        vid = video.get("id", "?")
+                        print(
+                            f"{Fore.CYAN}[pace {i}/{n_w}] {vid} "
+                            f"(min interval {pace_seconds:.0f}s){Style.RESET_ALL}"
                         )
-                    for future in concurrent.futures.as_completed(futures):
                         try:
-                            status, _message = future.result()
+                            status, _message = process_whisper_only_task(
+                                video, mp3_dir, trans_dir, logf, model_pool, None
+                            )
                             if status == "whisper":
                                 whisper_count += 1
                             elif status == "captions":
@@ -612,6 +648,50 @@ def process_channel_videos(
                                 f"{exc}{Style.RESET_ALL}"
                             )
                             logf.write(f"A task generated an exception: {exc}\n")
+                        elapsed = time.monotonic() - t0
+                        remaining = pace_seconds - elapsed
+                        if remaining > 0 and i < n_w:
+                            print(
+                                f"{Fore.BLUE}  pacing sleep {remaining:.0f}s "
+                                f"(work took {elapsed:.0f}s)...{Style.RESET_ALL}"
+                            )
+                            time.sleep(remaining)
+                else:
+                    print(
+                        f"{Fore.BLUE}--- Submitting {n_w} Whisper tasks "
+                        f"(up to {max_workers} workers)... ---{Style.RESET_ALL}"
+                    )
+                    with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=max_workers
+                    ) as executor:
+                        for video in need_whisper:
+                            futures.append(
+                                executor.submit(
+                                    process_whisper_only_task,
+                                    video,
+                                    mp3_dir,
+                                    trans_dir,
+                                    logf,
+                                    model_pool,
+                                    None,
+                                )
+                            )
+                        for future in concurrent.futures.as_completed(futures):
+                            try:
+                                status, _message = future.result()
+                                if status == "whisper":
+                                    whisper_count += 1
+                                elif status == "captions":
+                                    caption_count += 1
+                                elif status == "error":
+                                    error_count += 1
+                            except Exception as exc:
+                                error_count += 1
+                                print(
+                                    f"{Fore.RED + Style.BRIGHT}A task generated an exception: "
+                                    f"{exc}{Style.RESET_ALL}"
+                                )
+                                logf.write(f"A task generated an exception: {exc}\n")
         elif need_whisper and not whisper_fallback:
             error_count += len(need_whisper)
 

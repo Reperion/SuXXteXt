@@ -42,12 +42,22 @@ python -m suxxtext --mode batch --channel "@HANDLE" --limit 512
 python -m suxxtext --mode batch --channel "@HANDLE" --limit 512 \
   --workers 4 --model_instances 2 --model base
 
+# Safe mode: 1 video every 3 minutes (~480/day), serial — overnight-friendly
+python -m suxxtext --mode batch --channel "@HANDLE" --limit 512 --safe \
+  --cookies-from-browser chrome
+# Custom pace (seconds between Whisper starts):
+python -m suxxtext --mode batch --channel "@HANDLE" --limit 100 --pace 120
+
 # Force Whisper only (skip caption attempt)
 python -m suxxtext --mode batch --channel "@HANDLE" --limit 50 --whisper-only
 
 # Captions only (no GPU)
 python -m suxxtext --mode batch --channel "@HANDLE" --limit 50 --no-whisper-fallback
 ```
+
+**Cookies:** YouTube bot-check (“Sign in to confirm you’re not a bot”) often needs
+`--cookies-from-browser chrome` or `export SUXXTEXT_COOKIES_FROM_BROWSER=chrome`.
+Cookies + gentle/safe concurrency is the reliable path when captions API is IP-blocked.
 
 Captions run **serially** with `--caption-delay` (default 0.5s) to reduce API IP blocks.
 Whisper only loads for videos that missed captions.

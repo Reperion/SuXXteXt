@@ -14,6 +14,7 @@ from colorama import Fore, Style, init as colorama_init
 from suxxtext.jobs import (
     DEFAULT_MODEL_INSTANCES,
     DEFAULT_WORKERS,
+    SAFE_PACE_SECONDS,
     download_channel_history_json,
     process_channel_videos,
     process_single_video,
@@ -82,7 +83,13 @@ Examples:
   # Captions only (no download/Whisper):
   python -m suxxtext --mode batch --channel "@Drberg" --limit 50 --no-whisper-fallback
 
+  # Safe mode: 1 video / 3 min (~480/day), serial, low bot risk
+  python -m suxxtext --mode batch --channel "@Drberg" --limit 512 --safe
+  # custom pace (seconds between Whisper starts):
+  python -m suxxtext --mode batch --channel "@Drberg" --limit 100 --pace 120
+
   Defaults: --workers {DEFAULT_WORKERS} --model_instances {DEFAULT_MODEL_INSTANCES}
+  Cookies: export SUXXTEXT_COOKIES_FROM_BROWSER=chrome  (or --cookies-from-browser chrome)
   See docs/ops-channel-batch.md
         """,
     )
@@ -142,6 +149,34 @@ Examples:
         default=0.5,
         help="Seconds between caption requests in batch (default 0.5)",
     )
+    parser.add_argument(
+        "--safe",
+        action="store_true",
+        help=(
+            f"Safe/paced batch: 1 Whisper video every {int(SAFE_PACE_SECONDS)}s "
+            f"(~{int(86400 / SAFE_PACE_SECONDS)}/day), serial workers=1. "
+            "Pair with --cookies-from-browser chrome."
+        ),
+    )
+    parser.add_argument(
+        "--pace",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help=(
+            "Min seconds between Whisper video starts (serial). "
+            f"0=off. --safe sets this to {int(SAFE_PACE_SECONDS)}."
+        ),
+    )
+    parser.add_argument(
+        "--cookies-from-browser",
+        default=None,
+        metavar="BROWSER",
+        help=(
+            "Pass browser cookies to yt-dlp (chrome, firefox, …). "
+            "Sets SUXXTEXT_COOKIES_FROM_BROWSER for this process."
+        ),
+    )
     return parser
 
 
@@ -161,6 +196,9 @@ def main(argv=None):
             f"--no-whisper-fallback conflict{Style.RESET_ALL}"
         )
         return 1
+
+    if args.cookies_from_browser:
+        os.environ["SUXXTEXT_COOKIES_FROM_BROWSER"] = args.cookies_from_browser.strip()
 
     if args.mode:
         target = _resolve_url(args)
@@ -193,6 +231,8 @@ def main(argv=None):
                 prefer_captions=prefer_captions,
                 whisper_fallback=whisper_fallback,
                 caption_delay=args.caption_delay,
+                pace_seconds=float(args.pace or 0.0),
+                safe=bool(args.safe),
             )
         elif args.mode == "json":
             if not target:

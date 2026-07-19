@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 from suxxtext.jobs import (
     DEFAULT_MODEL_INSTANCES,
     DEFAULT_WORKERS,
+    SAFE_PACE_SECONDS,
+    SAFE_WORKERS,
     normalize_channel_url,
     try_captions_to_file,
     process_video_task,
@@ -26,6 +28,12 @@ def test_normalize_channel_url():
 def test_defaults_gentle():
     assert DEFAULT_WORKERS == 4
     assert DEFAULT_MODEL_INSTANCES == 2
+
+
+def test_safe_pace_constants():
+    assert SAFE_PACE_SECONDS == 180.0
+    assert SAFE_WORKERS == 1
+    assert int(86400 / SAFE_PACE_SECONDS) == 480
 
 
 def test_try_captions_success(tmp_path):
