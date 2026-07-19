@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -10,6 +11,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SUXXTEXT_VENV_PYTHON = PROJECT_ROOT / "suxxtext-venv" / "bin" / "python3"
+
+
+def _cookies_from_browser_args(
+    cookies_from_browser: Optional[str] = None,
+) -> List[str]:
+    """Optional yt-dlp --cookies-from-browser (arg or SUXXTEXT_COOKIES_FROM_BROWSER)."""
+    browser = (cookies_from_browser or os.environ.get("SUXXTEXT_COOKIES_FROM_BROWSER") or "").strip()
+    if not browser:
+        return []
+    return ["--cookies-from-browser", browser]
 
 
 def resolve_yt_dlp() -> List[str]:
@@ -42,11 +53,16 @@ def extract_video_id(url_or_id: str) -> str:
     return url_or_id
 
 
-def download_audio(youtube_url: str, output_file: str) -> Tuple[bool, Optional[str]]:
+def download_audio(
+    youtube_url: str,
+    output_file: str,
+    cookies_from_browser: Optional[str] = None,
+) -> Tuple[bool, Optional[str]]:
     try:
         subprocess.run(
             [
                 *resolve_yt_dlp(),
+                *_cookies_from_browser_args(cookies_from_browser),
                 "-f",
                 "bestaudio[ext=m4a]/bestaudio",
                 "-o",
@@ -61,11 +77,16 @@ def download_audio(youtube_url: str, output_file: str) -> Tuple[bool, Optional[s
         return False, str(e)
 
 
-def download_lowres_video(youtube_url: str, output_file: str) -> Tuple[bool, Optional[str]]:
+def download_lowres_video(
+    youtube_url: str,
+    output_file: str,
+    cookies_from_browser: Optional[str] = None,
+) -> Tuple[bool, Optional[str]]:
     try:
         subprocess.run(
             [
                 *resolve_yt_dlp(),
+                *_cookies_from_browser_args(cookies_from_browser),
                 "-f",
                 "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[ext=mp4]",
                 "--merge-output-format",

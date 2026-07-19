@@ -83,6 +83,27 @@ Writes `channels/<Channel>/summaries/<video_id>.json` plus `index.jsonl`.
 Each card: **problem**, **cause**, **solution** (~45–50 words each), **symptoms**,
 and **related** (adjacent topics / side mentions for search).
 
+### Large channel batches (ops)
+
+Scale playbook (throttle, YouTube 403/bot-check, cookie retries, PCS chain):
+**[docs/ops-channel-batch.md](docs/ops-channel-batch.md)**.
+
+```bash
+# Gentle Whisper after rate limits (skip-existing by video id)
+python -m suxxtext --mode batch --channel "@Drberg" --limit 512 \
+  --workers 4 --models 2 --model base
+
+# Residual bot-blocks: browser cookies (Chrome on host)
+export SUXXTEXT_COOKIES_FROM_BROWSER=chrome   # optional for main download path
+python scripts/retry_missing_with_cookies.py Drberg /tmp/retry-ids.txt chrome
+
+# Step 2 only when Ollama is up
+curl -s -m 3 http://127.0.0.1:11434/api/tags && \
+  python -m suxxtext.pcs --channel Drberg
+```
+
+Helpers: `scripts/retry_missing_with_cookies.py`, `scripts/drberg_tg_progress.sh`.
+
 ---
 
 ## ✨ Key Features
