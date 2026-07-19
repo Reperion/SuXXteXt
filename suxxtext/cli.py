@@ -19,6 +19,7 @@ from suxxtext.jobs import (
     process_channel_videos,
     process_single_video,
 )
+from suxxtext.monitor import list_channels_with_logs, run_monitor
 
 colorama_init(autoreset=True)
 
@@ -83,10 +84,15 @@ Examples:
   # Captions only (no download/Whisper):
   python -m suxxtext --mode batch --channel "@Drberg" --limit 50 --no-whisper-fallback
 
-  # Safe mode: 1 video / 3 min (~480/day), serial, low bot risk
+  # Safe mode: 1 video / 3 min (~480/day), serial — good when sharing the PC
   python -m suxxtext --mode batch --channel "@Drberg" --limit 512 --safe
   # custom pace (seconds between Whisper starts):
   python -m suxxtext --mode batch --channel "@Drberg" --limit 100 --pace 120
+
+  # Live dashboard (near real-time):
+  python -m suxxtext --mode monitor
+  python -m suxxtext --mode monitor --channel Drberg --interval 1.5
+  suxxtext --mode monitor
 
   Defaults: --workers {DEFAULT_WORKERS} --model_instances {DEFAULT_MODEL_INSTANCES}
   Cookies: export SUXXTEXT_COOKIES_FROM_BROWSER=chrome  (or --cookies-from-browser chrome)
@@ -96,8 +102,8 @@ Examples:
     parser.add_argument(
         "-m",
         "--mode",
-        choices=["single", "batch", "json", "stats"],
-        help="Operation mode: single, batch, json, stats",
+        choices=["single", "batch", "json", "stats", "monitor"],
+        help="Operation mode: single, batch, json, stats, monitor",
     )
     parser.add_argument("-u", "--url", help="YouTube video or channel URL")
     parser.add_argument(
@@ -177,6 +183,17 @@ Examples:
             "Sets SUXXTEXT_COOKIES_FROM_BROWSER for this process."
         ),
     )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=1.5,
+        help="Monitor refresh seconds (default 1.5)",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Monitor: print one dashboard frame and exit",
+    )
     return parser
 
 
@@ -244,6 +261,16 @@ def main(argv=None):
             download_channel_history_json(url=target)
         elif args.mode == "stats":
             run_stats()
+        elif args.mode == "monitor":
+            ch = args.channel
+            # --channel might be @Handle; strip for archive folder
+            if ch and ch.startswith("@"):
+                ch = ch[1:]
+            return run_monitor(
+                channel=ch,
+                interval=args.interval,
+                once=args.once,
+            )
         return 0
 
     # Interactive loop — paste a channel link and go
@@ -264,9 +291,13 @@ def main(argv=None):
         print(
             f"{Fore.WHITE + Style.BRIGHT}4. Generate Statistics (from existing JSON history){Style.RESET_ALL}"
         )
+        print(
+            f"{Fore.WHITE + Style.BRIGHT}5. Monitor batch / PCS dashboard "
+            f"(near real-time){Style.RESET_ALL}"
+        )
         print(f"{Fore.WHITE + Style.BRIGHT}0. Exit{Style.RESET_ALL}")
         choice = input(
-            f"{Fore.CYAN}Choose an option (0, 1, 2, 3, or 4): {Style.RESET_ALL}"
+            f"{Fore.CYAN}Choose an option (0–5): {Style.RESET_ALL}"
         ).strip()
 
         if choice == "1":
@@ -278,6 +309,17 @@ def main(argv=None):
         elif choice == "4":
             run_stats()
             time.sleep(5)
+        elif choice == "5":
+            chans = list_channels_with_logs()
+            default = "Drberg" if "Drberg" in chans else (chans[0] if chans else "Drberg")
+            prompt = (
+                f"{Fore.CYAN}Channel folder to monitor "
+                f"[{default}]: {Style.RESET_ALL}"
+            )
+            pick = input(prompt).strip() or default
+            if pick.startswith("@"):
+                pick = pick[1:]
+            run_monitor(channel=pick, interval=1.5)
         elif choice == "0":
             print(f"{Fore.GREEN}Exiting. Goodbye!{Style.RESET_ALL}")
             break

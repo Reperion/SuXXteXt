@@ -121,6 +121,18 @@ curl -s -m 3 http://127.0.0.1:11434/api/tags && \
 
 Helpers: `scripts/retry_missing_with_cookies.py`, `scripts/drberg_tg_progress.sh`.
 
+### Live monitor dashboard
+
+```bash
+suxxtext --mode monitor                 # auto-picks active channel
+suxxtext --mode monitor --channel Drberg --interval 1.5
+suxxtext --mode monitor --once          # one frame (scripts/CI)
+# interactive menu → option 5
+```
+
+Near-real-time CLI dashboard: batch PID, transcript/mp3/PCS counts, progress bar,
+in-flight download/transcribe IDs, recent files, GPU, log tail.
+
 ---
 
 ## ✨ Key Features
