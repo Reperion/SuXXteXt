@@ -48,6 +48,19 @@ python3 transcribe2.py
 ./run.sh
 ```
 
+### Global `suxxtext` command (WSL)
+
+On this machine a launcher lives at `~/.local/bin/suxxtext` (on `PATH`), so from **any** directory:
+
+```bash
+suxxtext                  # interactive CLI
+suxxtext --mode batch --channel "@Drberg" --limit 50
+suxxtext --help
+```
+
+It runs `run.sh` under `/home/lucid/projects/yt-transcriber` (override with `SUXXTEXT_ROOT`).
+To install elsewhere: `ln -sf /path/to/SuXXteXt/run.sh ~/.local/bin/suxxtext && chmod +x ~/.local/bin/suxxtext`.
+
 ### Package layout
 
 ```

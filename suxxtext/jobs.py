@@ -448,6 +448,24 @@ def process_channel_videos(
     error_count = 0
     checked_count = 0
     need_whisper: List[dict] = []
+    # After N consecutive IP / request blocks from youtube-transcript-api, skip
+    # further caption attempts for this run (Whisper path still works).
+    caption_ip_block_streak = 0
+    captions_disabled_this_run = False
+    IP_BLOCK_STREAK_LIMIT = 3
+
+    def _looks_like_ip_block(detail: str) -> bool:
+        d = (detail or "").lower()
+        return any(
+            s in d
+            for s in (
+                "blocking requests from your ip",
+                "ipblocked",
+                "requestblocked",
+                "too many requests",
+                "cloud provider",
+            )
+        )
 
     print(
         f"\n{Fore.BLUE}Starting processing. Aiming to ensure the latest {num_videos_target} "
@@ -503,20 +521,33 @@ def process_channel_videos(
             if found_existing:
                 continue
 
-            if prefer_captions:
+            if prefer_captions and not captions_disabled_this_run:
                 _, _, _, _, txt_path = _paths_for_video(video, mp3_dir, trans_dir)
                 print(f"{Fore.BLUE}  - Trying captions...{Style.RESET_ALL}")
                 ok, detail = try_captions_to_file(video_id, txt_path)
                 if ok:
                     print(f"{Fore.GREEN}  - Captions OK ({detail}){Style.RESET_ALL}")
                     caption_count += 1
+                    caption_ip_block_streak = 0
                     existing_transcriptions.append(os.path.basename(txt_path))
                     if caption_delay > 0:
                         time.sleep(caption_delay)
                     continue
                 print(f"{Fore.YELLOW}  - Captions miss: {detail}{Style.RESET_ALL}")
                 logf.write(f"Captions miss {video_id}: {detail}\n")
-                if caption_delay > 0:
+                if _looks_like_ip_block(detail):
+                    caption_ip_block_streak += 1
+                    if caption_ip_block_streak >= IP_BLOCK_STREAK_LIMIT:
+                        captions_disabled_this_run = True
+                        msg = (
+                            f"Caption API IP-blocked {caption_ip_block_streak}x in a row — "
+                            f"skipping further caption attempts this run; Whisper fallback."
+                        )
+                        print(f"{Fore.MAGENTA}{msg}{Style.RESET_ALL}")
+                        logf.write(msg + "\n")
+                else:
+                    caption_ip_block_streak = 0
+                if caption_delay > 0 and not captions_disabled_this_run:
                     time.sleep(caption_delay)
                 if not whisper_fallback:
                     error_count += 1
@@ -524,6 +555,11 @@ def process_channel_videos(
                     continue
                 need_whisper.append(video)
             else:
+                if prefer_captions and captions_disabled_this_run:
+                    print(
+                        f"{Fore.YELLOW}  - Captions skipped (API blocked this run) "
+                        f"→ Whisper queue{Style.RESET_ALL}"
+                    )
                 need_whisper.append(video)
 
         # --- Phase 2: Whisper for remaining ---
