@@ -85,19 +85,23 @@ and **related** (adjacent topics / side mentions for search).
 
 ### Large channel batches (ops)
 
-Scale playbook (throttle, YouTube 403/bot-check, cookie retries, PCS chain):
+Default CLI pipeline: **captions first → Whisper fallback**, skip-by-video_id,
+gentle throttle **4 workers / 2 Whisper models**. Full playbook:
 **[docs/ops-channel-batch.md](docs/ops-channel-batch.md)**.
 
 ```bash
-# Gentle Whisper after rate limits (skip-existing by video id)
-python -m suxxtext --mode batch --channel "@Drberg" --limit 512 \
-  --workers 4 --models 2 --model base
+# Preferred (agents + humans)
+python -m suxxtext --mode batch --channel "@Drberg" --limit 512
 
-# Residual bot-blocks: browser cookies (Chrome on host)
-export SUXXTEXT_COOKIES_FROM_BROWSER=chrome   # optional for main download path
+# Force Whisper only / captions only
+python -m suxxtext --mode batch --channel "@Drberg" --limit 50 --whisper-only
+python -m suxxtext --mode batch --channel "@Drberg" --limit 50 --no-whisper-fallback
+
+# Residual bot-blocks on Whisper downloads
+export SUXXTEXT_COOKIES_FROM_BROWSER=chrome
 python scripts/retry_missing_with_cookies.py Drberg /tmp/retry-ids.txt chrome
 
-# Step 2 only when Ollama is up
+# Step 2 PCS only when Ollama is up
 curl -s -m 3 http://127.0.0.1:11434/api/tags && \
   python -m suxxtext.pcs --channel Drberg
 ```

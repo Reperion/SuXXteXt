@@ -5,7 +5,8 @@ channel archive under `channels/<Name>/`.
 
 ## Goals
 
-1. **Step 1 — transcripts:** Whisper full audio for N latest videos, skip by `video_id`.
+1. **Step 1 — transcripts:** For N latest videos, **captions first** (fast, no GPU),
+   then Whisper only on miss; skip by `video_id`.
 2. **Step 2 — PCS cards:** Ollama (`gemma4:e4b` default) → fluff-free
    problem / cause / solution (+ related) under `summaries/`.
 
@@ -25,31 +26,42 @@ channels/<Channel>/
 
 Skip logic: any existing transcript whose filename ends with `_<video_id>.txt`.
 
-## Step 1 — batch Whisper (skip-existing)
+## Step 1 — batch (captions first → Whisper)
+
+CLI defaults (2026-07-19): **captions first**, Whisper fallback, **4 workers / 2 models**.
 
 ```bash
 cd /home/lucid/projects/yt-transcriber
 source suxxtext-venv/bin/activate
 export PYTHONPATH=.
 
-# Aggressive (works until YouTube rate-limits / bot-check)
-python -m suxxtext --mode batch --channel "@HANDLE" --limit 512 \
-  --workers 10 --models 5 --model base
+# Preferred — same as agents should use
+python -m suxxtext --mode batch --channel "@HANDLE" --limit 512
 
-# Gentle (recover from 403 / 429 storms)
+# Explicit gentle Whisper throttle (defaults already 4 / 2)
 python -m suxxtext --mode batch --channel "@HANDLE" --limit 512 \
-  --workers 4 --models 2 --model base
+  --workers 4 --model_instances 2 --model base
+
+# Force Whisper only (skip caption attempt)
+python -m suxxtext --mode batch --channel "@HANDLE" --limit 50 --whisper-only
+
+# Captions only (no GPU)
+python -m suxxtext --mode batch --channel "@HANDLE" --limit 50 --no-whisper-fallback
 ```
 
-### Throttle guidance (RTX 3080 Ti-class)
+Captions run **serially** with `--caption-delay` (default 0.5s) to reduce API IP blocks.
+Whisper only loads for videos that missed captions.
+
+### Throttle guidance (RTX 3080 Ti-class, Whisper phase)
 
 | Workers | Whisper models | When |
 |--------:|---------------:|------|
-| 10 | 5 | Cold start, few 403s |
-| **4** | **2** | **Default after 403/429 / “Sign in to confirm you’re not a bot”** |
+| **4** | **2** | **CLI default — proven on Drberg residual** |
+| 10 | 5 | Faster but 403/429 risk on audio downloads |
 | 1–2 serial | 1–2 | Residual hard fails (see cookies) |
 
-Expect ~40–50 new transcripts / 10 min on gentle settings when healthy.
+Expect many channels to fill mostly from captions (minutes not hours). Whisper phase
+~40–50 new transcripts / 10 min when healthy on gentle settings.
 
 ### Rate-limit symptoms
 
