@@ -10,7 +10,7 @@ from suxxtext.monitor import _bar, _parse_log, collect_snapshot, render_snapshot
 def test_bar():
     s = _bar(25, 100, width=10)
     assert "25.0%" in s
-    assert "#" in s
+    assert "█" in s or "░" in s
 
 
 def test_parse_log_counts():
@@ -56,5 +56,6 @@ def test_collect_and_render(tmp_path, monkeypatch):
     assert snap["n_txt"] == 1
     assert snap["parsed"]["whisper_ok"] == 1
     out = render_snapshot(snap)
-    assert "SuXXTeXt monitor" in out
+    assert "SuXXTeXt" in out and "LIVE" in out
     assert "TestCh" in out
+    assert "ARCHIVE" in out or "txt" in out
